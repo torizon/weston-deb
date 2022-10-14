@@ -44,6 +44,14 @@ enum weston_desktop_surface_edge {
 	WESTON_DESKTOP_SURFACE_EDGE_BOTTOM_RIGHT = 10,
 };
 
+enum weston_top_level_tiled_orientation {
+	WESTON_TOP_LEVEL_TILED_ORIENTATION_NONE 	= 0 << 0,
+	WESTON_TOP_LEVEL_TILED_ORIENTATION_LEFT 	= 1 << 1,
+	WESTON_TOP_LEVEL_TILED_ORIENTATION_RIGHT 	= 1 << 2,
+	WESTON_TOP_LEVEL_TILED_ORIENTATION_TOP 		= 1 << 3,
+	WESTON_TOP_LEVEL_TILED_ORIENTATION_BOTTOM 	= 1 << 4,
+};
+
 struct weston_desktop;
 struct weston_desktop_client;
 struct weston_desktop_surface;
@@ -113,6 +121,9 @@ struct weston_desktop_api {
 	 */
 	void (*set_xwayland_position)(struct weston_desktop_surface *surface,
 				      int32_t x, int32_t y, void *user_data);
+	void (*get_position)(struct weston_desktop_surface *surface,
+			     int32_t *x, int32_t *y,
+			     void *user_data);
 };
 
 void
@@ -163,6 +174,9 @@ void
 weston_desktop_surface_set_size(struct weston_desktop_surface *surface,
 				int32_t width, int32_t height);
 void
+weston_desktop_surface_set_orientation(struct weston_desktop_surface *surface,
+				       enum weston_top_level_tiled_orientation tile_orientation);
+void
 weston_desktop_surface_close(struct weston_desktop_surface *surface);
 void
 weston_desktop_surface_add_metadata_listener(struct weston_desktop_surface *surface,
@@ -194,6 +208,19 @@ struct weston_size
 weston_desktop_surface_get_max_size(struct weston_desktop_surface *surface);
 struct weston_size
 weston_desktop_surface_get_min_size(struct weston_desktop_surface *surface);
+
+bool
+weston_desktop_window_menu_supported(struct weston_desktop *desktop);
+bool
+weston_desktop_move_supported(struct weston_desktop *desktop);
+bool
+weston_desktop_resize_supported(struct weston_desktop *desktop);
+bool
+weston_desktop_fullscreen_supported(struct weston_desktop *desktop);
+bool
+weston_desktop_minimize_supported(struct weston_desktop *desktop);
+bool
+weston_desktop_maximize_supported(struct weston_desktop *desktop);
 
 #ifdef __cplusplus
 }

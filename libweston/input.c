@@ -2197,12 +2197,6 @@ notify_key(struct weston_seat *seat, const struct timespec *time, uint32_t key,
 	struct weston_keyboard_grab *grab = keyboard->grab;
 	uint32_t *k, *end;
 
-	if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
-		weston_compositor_idle_inhibit(compositor);
-	} else {
-		weston_compositor_idle_release(compositor);
-	}
-
 	end = keyboard->keys.data + keyboard->keys.size;
 	for (k = keyboard->keys.data; k < end; k++) {
 		if (*k == key) {
@@ -2216,6 +2210,12 @@ notify_key(struct weston_seat *seat, const struct timespec *time, uint32_t key,
 	if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 		k = wl_array_add(&keyboard->keys, sizeof *k);
 		*k = key;
+	}
+
+	if (state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+		weston_compositor_idle_inhibit(compositor);
+	} else {
+		weston_compositor_idle_release(compositor);
 	}
 
 	if (grab == &keyboard->default_grab ||
@@ -2329,6 +2329,7 @@ notify_keyboard_focus_out(struct weston_seat *seat)
 	if (focus) {
 		seat->use_saved_kbd_focus = true;
 		seat->saved_kbd_focus = focus;
+		assert(seat->saved_kbd_focus_listener.notify == NULL);
 		seat->saved_kbd_focus_listener.notify =
 			destroy_device_saved_kbd_focus;
 		wl_signal_add(&focus->destroy_signal,
@@ -2697,7 +2698,7 @@ pointer_cursor_surface_committed(struct weston_surface *es,
 		weston_layer_entry_insert(&es->compositor->cursor_layer.view_list,
 					  &pointer->sprite->layer_link);
 		weston_view_update_transform(pointer->sprite);
-		es->is_mapped = true;
+		weston_surface_map(es);
 		pointer->sprite->is_mapped = true;
 	}
 }

@@ -162,6 +162,10 @@ int32_t
 frame_height(struct frame *frame);
 
 void
+frame_decoration_sizes(struct frame *frame, int32_t *top, int32_t *bottom,
+                       int32_t *left, int32_t *right);
+
+void
 frame_interior(struct frame *frame, int32_t *x, int32_t *y,
 	       int32_t *width, int32_t *height);
 void
@@ -229,5 +233,8 @@ frame_double_touch_up(struct frame *frame, void *data, int32_t id);
 
 void
 frame_repaint(struct frame *frame, cairo_t *cr);
+
+void
+cleanup_after_cairo(void);
 
 #endif

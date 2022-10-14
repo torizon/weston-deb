@@ -73,6 +73,8 @@ drm_plane_state_alloc(struct drm_output_state *state_output,
 void
 drm_plane_state_free(struct drm_plane_state *state, bool force)
 {
+	struct drm_device *device;
+
 	if (!state)
 		return;
 
@@ -86,14 +88,17 @@ drm_plane_state_free(struct drm_plane_state *state, bool force)
 	 * by the kernel, which means we can safely discard it.
 	 */
 	if (state->damage_blob_id != 0) {
-		drmModeDestroyPropertyBlob(state->plane->backend->drm.fd,
+		device = state->plane->device;
+
+		drmModeDestroyPropertyBlob(device->drm.fd,
 					   state->damage_blob_id);
 		state->damage_blob_id = 0;
 	}
 
 	if (force || state != state->plane->state_cur) {
 		drm_fb_unref(state->fb);
-		weston_buffer_reference(&state->fb_ref.buffer, NULL);
+		weston_buffer_reference(&state->fb_ref.buffer, NULL,
+					BUFFER_WILL_NOT_BE_ACCESSED);
 		weston_buffer_release_reference(&state->fb_ref.release, NULL);
 		free(state);
 	}
@@ -135,10 +140,20 @@ drm_plane_state_duplicate(struct drm_output_state *state_output,
 	 * buffer, then we must also transfer the reference on the client
 	 * buffer. */
 	if (src->fb) {
+		struct weston_buffer *buffer;
+
 		dst->fb = drm_fb_ref(src->fb);
 		memset(&dst->fb_ref, 0, sizeof(dst->fb_ref));
-		weston_buffer_reference(&dst->fb_ref.buffer,
-					src->fb_ref.buffer.buffer);
+
+		if (src->fb->type == BUFFER_CLIENT ||
+		    src->fb->type == BUFFER_DMABUF) {
+			buffer = src->fb_ref.buffer.buffer;
+		} else {
+			buffer = NULL;
+		}
+		weston_buffer_reference(&dst->fb_ref.buffer, buffer,
+					buffer ? BUFFER_MAY_BE_ACCESSED :
+					         BUFFER_WILL_NOT_BE_ACCESSED);
 		weston_buffer_release_reference(&dst->fb_ref.release,
 						src->fb_ref.release.buffer_release);
 	} else {
@@ -421,11 +436,11 @@ drm_output_state_free(struct drm_output_state *state)
  * Allocate a new, empty, 'pending state' structure to be used across a
  * repaint cycle or similar.
  *
- * @param backend DRM backend
+ * @param device DRM device
  * @returns Newly-allocated pending state structure
  */
 struct drm_pending_state *
-drm_pending_state_alloc(struct drm_backend *backend)
+drm_pending_state_alloc(struct drm_device *device)
 {
 	struct drm_pending_state *ret;
 
@@ -433,7 +448,7 @@ drm_pending_state_alloc(struct drm_backend *backend)
 	if (!ret)
 		return NULL;
 
-	ret->backend = backend;
+	ret->device = device;
 	wl_list_init(&ret->output_list);
 
 	return ret;

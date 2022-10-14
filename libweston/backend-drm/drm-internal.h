@@ -186,6 +186,8 @@ enum wdrm_connector_property {
 	WDRM_CONNECTOR_CONTENT_PROTECTION,
 	WDRM_CONNECTOR_HDCP_CONTENT_TYPE,
 	WDRM_CONNECTOR_PANEL_ORIENTATION,
+	WDRM_CONNECTOR_HDR_OUTPUT_METADATA,
+	WDRM_CONNECTOR_MAX_BPC,
 	WDRM_CONNECTOR__COUNT
 };
 
@@ -232,11 +234,20 @@ enum wdrm_crtc_property {
  */
 enum try_view_on_plane_failure_reasons {
 	FAILURE_REASONS_NONE = 0,
-	FAILURE_REASONS_FORCE_RENDERER = (1 << 0),
-	FAILURE_REASONS_FB_FORMAT_INCOMPATIBLE = (1 << 1),
-	FAILURE_REASONS_DMABUF_MODIFIER_INVALID = (1 << 2),
-	FAILURE_REASONS_ADD_FB_FAILED = (1 << 3),
-	FAILURE_REASONS_GBM_BO_IMPORT_FAILED = (1 << 4)
+	FAILURE_REASONS_FORCE_RENDERER = 1 << 0,
+	FAILURE_REASONS_FB_FORMAT_INCOMPATIBLE = 1 << 1,
+	FAILURE_REASONS_DMABUF_MODIFIER_INVALID = 1 << 2,
+	FAILURE_REASONS_ADD_FB_FAILED = 1 << 3,
+	FAILURE_REASONS_NO_PLANES_AVAILABLE = 1 << 4,
+	FAILURE_REASONS_PLANES_REJECTED = 1 << 5,
+	FAILURE_REASONS_INADEQUATE_CONTENT_PROTECTION = 1 << 6,
+	FAILURE_REASONS_INCOMPATIBLE_TRANSFORM = 1 << 7,
+	FAILURE_REASONS_NO_BUFFER = 1 << 8,
+	FAILURE_REASONS_BUFFER_TYPE = 1 << 9,
+	FAILURE_REASONS_GLOBAL_ALPHA = 1 << 10,
+	FAILURE_REASONS_NO_GBM = 1 << 11,
+	FAILURE_REASONS_GBM_BO_IMPORT_FAILED = 1 << 12,
+	FAILURE_REASONS_GBM_BO_GET_HANDLE_FAILED = 1 << 13,
 };
 
 /**
@@ -249,6 +260,48 @@ enum actions_needed_dmabuf_feedback {
 	ACTION_NEEDED_REMOVE_SCANOUT_TRANCHE = (1 << 1),
 };
 
+struct drm_device {
+	struct drm_backend *backend;
+
+	struct {
+		int id;
+		int fd;
+		char *filename;
+		dev_t devnum;
+	} drm;
+
+	/* drm_crtc::link */
+	struct wl_list crtc_list;
+
+	struct wl_list plane_list;
+
+	/* drm_writeback::link */
+	struct wl_list writeback_connector_list;
+
+	bool state_invalid;
+
+	bool atomic_modeset;
+
+	bool aspect_ratio_supported;
+
+	int32_t cursor_width;
+	int32_t cursor_height;
+
+	bool cursors_are_broken;
+	bool sprites_are_broken;
+
+	void *repaint_data;
+
+	bool fb_modifiers;
+
+	/* we need these parameters in order to not fail drmModeAddFB2()
+	 * due to out of bounds dimensions, and then mistakenly set
+	 * sprites_are_broken:
+	 */
+	int min_width, max_width;
+	int min_height, max_height;
+};
+
 struct drm_backend {
 	struct weston_backend base;
 	struct weston_compositor *compositor;
@@ -259,56 +312,19 @@ struct drm_backend {
 	struct udev_monitor *udev_monitor;
 	struct wl_event_source *udev_drm_source;
 
-	struct {
-		int id;
-		int fd;
-		char *filename;
-		dev_t devnum;
-	} drm;
+	struct drm_device *drm;
 	struct gbm_device *gbm;
 	struct wl_listener session_listener;
 	uint32_t gbm_format;
-
-	/* we need these parameters in order to not fail drmModeAddFB2()
-	 * due to out of bounds dimensions, and then mistakenly set
-	 * sprites_are_broken:
-	 */
-	int min_width, max_width;
-	int min_height, max_height;
-
-	struct wl_list plane_list;
-	uint32_t next_plane_idx;
-
-	void *repaint_data;
-
-	bool state_invalid;
-
-	/* drm_crtc::link */
-	struct wl_list crtc_list;
-
-	/* drm_writeback::link */
-	struct wl_list writeback_connector_list;
-
-	bool sprites_are_broken;
-	bool cursors_are_broken;
-
-	bool atomic_modeset;
 
 	bool use_pixman;
 	bool use_pixman_shadow;
 
 	struct udev_input input;
 
-	int32_t cursor_width;
-	int32_t cursor_height;
-
 	uint32_t pageflip_timeout;
 
 	bool shutting_down;
-
-	bool aspect_ratio_supported;
-
-	bool fb_modifiers;
 
 	struct weston_log_scope *debug;
 };
@@ -373,7 +389,7 @@ struct drm_edid {
  * output state will complete and be retired separately.
  */
 struct drm_pending_state {
-	struct drm_backend *backend;
+	struct drm_device *device;
 	struct wl_list output_list;
 };
 
@@ -394,16 +410,6 @@ struct drm_output_state {
 	enum dpms_enum dpms;
 	enum weston_hdcp_protection protection;
 	struct wl_list plane_list;
-};
-
-/**
- * An instance of this class is created each time we believe we have a plane
- * suitable to be used by a view as a direct scan-out. The list is initialized
- * and populated locally.
- */
-struct drm_plane_zpos {
-	struct drm_plane *plane;
-	struct wl_list link;	/**< :candidate_plane_zpos_list */
 };
 
 /**
@@ -461,7 +467,7 @@ struct drm_plane_state {
 struct drm_plane {
 	struct weston_plane base;
 
-	struct drm_backend *backend;
+	struct drm_device *device;
 
 	enum wdrm_plane_type type;
 
@@ -483,7 +489,7 @@ struct drm_plane {
 };
 
 struct drm_connector {
-	struct drm_backend *backend;
+	struct drm_device *device;
 
 	drmModeConnector *conn;
 	uint32_t connector_id;
@@ -495,16 +501,15 @@ struct drm_connector {
 };
 
 struct drm_writeback {
-	/* drm_backend::writeback_connector_list */
+	/* drm_device::writeback_connector_list */
 	struct wl_list link;
 
-	struct drm_backend *backend;
+	struct drm_device *device;
 	struct drm_connector connector;
 };
 
 struct drm_head {
 	struct weston_head base;
-	struct drm_backend *backend;
 	struct drm_connector connector;
 
 	struct drm_edid edid;
@@ -516,9 +521,9 @@ struct drm_head {
 };
 
 struct drm_crtc {
-	/* drm_backend::crtc_list */
+	/* drm_device::crtc_list */
 	struct wl_list link;
-	struct drm_backend *backend;
+	struct drm_device *device;
 
 	/* The output driven by the CRTC */
 	struct drm_output *output;
@@ -532,7 +537,7 @@ struct drm_crtc {
 
 struct drm_output {
 	struct weston_output base;
-	struct drm_backend *backend;
+	struct drm_device *device;
 	struct drm_crtc *crtc;
 
 	bool page_flip_pending;
@@ -540,6 +545,7 @@ struct drm_output {
 	bool destroy_pending;
 	bool disable_pending;
 	bool dpms_off_pending;
+	bool mode_switch_pending;
 
 	uint32_t gbm_cursor_handle[2];
 	struct drm_fb *gbm_cursor_fb[2];
@@ -551,6 +557,11 @@ struct drm_output {
 	struct gbm_surface *gbm_surface;
 	uint32_t gbm_format;
 	uint32_t gbm_bo_flags;
+
+	uint32_t hdr_output_metadata_blob_id;
+	uint64_t ackd_color_outcome_serial;
+
+	unsigned max_bpc;
 
 	/* Plane being displayed directly on the CRTC */
 	struct drm_plane *scanout_plane;
@@ -572,19 +583,36 @@ struct drm_output {
 	struct wl_event_source *pageflip_timer;
 
 	bool virtual;
+	void (*virtual_destroy)(struct weston_output *base);
 
 	submit_frame_cb virtual_submit_frame;
 };
 
+void
+drm_head_destroy(struct weston_head *head_base);
+
 static inline struct drm_head *
 to_drm_head(struct weston_head *base)
 {
+	if (base->backend_id != drm_head_destroy)
+		return NULL;
 	return container_of(base, struct drm_head, base);
 }
+
+void
+drm_output_destroy(struct weston_output *output_base);
+void
+drm_virtual_output_destroy(struct weston_output *output_base);
 
 static inline struct drm_output *
 to_drm_output(struct weston_output *base)
 {
+	if (
+#ifdef BUILD_DRM_VIRTUAL
+	    base->destroy != drm_virtual_output_destroy &&
+#endif
+	    base->destroy != drm_output_destroy)
+		return NULL;
 	return container_of(base, struct drm_output, base);
 }
 
@@ -617,7 +645,7 @@ drm_output_get_plane_type_name(struct drm_plane *p)
 }
 
 struct drm_crtc *
-drm_crtc_find(struct drm_backend *b, uint32_t crtc_id);
+drm_crtc_find(struct drm_device *device, uint32_t crtc_id);
 
 struct drm_head *
 drm_head_find_by_connector(struct drm_backend *backend, uint32_t connector_id);
@@ -642,7 +670,7 @@ drm_view_transform_supported(struct weston_view *ev, struct weston_output *outpu
 }
 
 int
-drm_mode_ensure_blob(struct drm_backend *backend, struct drm_mode *mode);
+drm_mode_ensure_blob(struct drm_device *device, struct drm_mode *mode);
 
 struct drm_mode *
 drm_output_choose_mode(struct drm_output *output,
@@ -651,7 +679,7 @@ void
 update_head_from_connector(struct drm_head *head);
 
 void
-drm_mode_list_destroy(struct drm_backend *backend, struct wl_list *mode_list);
+drm_mode_list_destroy(struct drm_device *device, struct wl_list *mode_list);
 
 void
 drm_output_print_modes(struct drm_output *output);
@@ -662,7 +690,7 @@ drm_output_set_mode(struct weston_output *base,
 		    const char *modeline);
 
 void
-drm_property_info_populate(struct drm_backend *b,
+drm_property_info_populate(struct drm_device *device,
 		           const struct drm_property_info *src,
 			   struct drm_property_info *info,
 			   unsigned int num_infos,
@@ -690,7 +718,7 @@ extern const struct drm_property_info connector_props[];
 extern const struct drm_property_info crtc_props[];
 
 int
-init_kms_caps(struct drm_backend *b);
+init_kms_caps(struct drm_device *device);
 
 int
 drm_pending_state_test(struct drm_pending_state *pending_state);
@@ -717,14 +745,17 @@ void
 drm_fb_unref(struct drm_fb *fb);
 
 struct drm_fb *
-drm_fb_create_dumb(struct drm_backend *b, int width, int height,
+drm_fb_create_dumb(struct drm_device *device, int width, int height,
 		   uint32_t format);
 struct drm_fb *
-drm_fb_get_from_bo(struct gbm_bo *bo, struct drm_backend *backend,
+drm_fb_get_from_bo(struct gbm_bo *bo, struct drm_device *device,
 		   bool is_opaque, enum drm_fb_type type);
 
 void
 drm_output_set_cursor_view(struct drm_output *output, struct weston_view *ev);
+
+int
+drm_output_ensure_hdr_output_metadata_blob(struct drm_output *output);
 
 #ifdef BUILD_DRM_GBM
 extern struct drm_fb *
@@ -749,7 +780,7 @@ drm_can_scanout_dmabuf(struct weston_compositor *ec,
 #endif
 
 struct drm_pending_state *
-drm_pending_state_alloc(struct drm_backend *backend);
+drm_pending_state_alloc(struct drm_device *device);
 void
 drm_pending_state_free(struct drm_pending_state *pending_state);
 struct drm_output_state *
@@ -800,7 +831,7 @@ void
 drm_plane_reset_state(struct drm_plane *plane);
 
 void
-drm_assign_planes(struct weston_output *output_base, void *repaint_data);
+drm_assign_planes(struct weston_output *output_base);
 
 bool
 drm_plane_is_available(struct drm_plane *plane, struct drm_output *output);
@@ -837,9 +868,6 @@ drm_output_fini_egl(struct drm_output *output);
 struct drm_fb *
 drm_output_render_gl(struct drm_output_state *state, pixman_region32_t *damage);
 
-void
-renderer_switch_binding(struct weston_keyboard *keyboard,
-			const struct timespec *time, uint32_t key, void *data);
 #else
 inline static int
 init_egl(struct drm_backend *b)
@@ -863,12 +891,5 @@ inline static struct drm_fb *
 drm_output_render_gl(struct drm_output_state *state, pixman_region32_t *damage)
 {
 	return NULL;
-}
-
-inline static void
-renderer_switch_binding(struct weston_keyboard *keyboard,
-			const struct timespec *time, uint32_t key, void *data)
-{
-	weston_log("Compiled without GBM/EGL support\n");
 }
 #endif

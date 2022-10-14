@@ -43,13 +43,11 @@ static const struct launcher_interface *ifaces[] = {
 #ifdef HAVE_SYSTEMD_LOGIN
 	&launcher_logind_iface,
 #endif
-	&launcher_weston_launch_iface,
-	&launcher_direct_iface,
 	NULL,
 };
 
 WL_EXPORT struct weston_launcher *
-weston_launcher_connect(struct weston_compositor *compositor, int tty,
+weston_launcher_connect(struct weston_compositor *compositor,
 			const char *seat_id, bool sync_drm)
 {
 	const struct launcher_interface **it;
@@ -59,7 +57,7 @@ weston_launcher_connect(struct weston_compositor *compositor, int tty,
 		struct weston_launcher *launcher;
 
 		weston_log("Trying %s launcher...\n", iface->name);
-		if (iface->connect(&launcher, compositor, tty, seat_id, sync_drm) == 0)
+		if (iface->connect(&launcher, compositor, seat_id, sync_drm) == 0)
 			return launcher;
 	}
 

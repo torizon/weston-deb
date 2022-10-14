@@ -35,6 +35,18 @@ struct weston_color_manager_noop {
 	struct weston_color_manager base;
 };
 
+static bool
+check_output_eotf_mode(struct weston_output *output)
+{
+	if (output->eotf_mode == WESTON_EOTF_MODE_SDR)
+		return true;
+
+	weston_log("Error: color manager no-op does not support EOTF mode %s of output %s.\n",
+		   weston_eotf_mode_to_str(output->eotf_mode),
+		   output->name);
+	return false;
+}
+
 static struct weston_color_manager_noop *
 get_cmnoop(struct weston_color_manager *cm_base)
 {
@@ -74,6 +86,9 @@ cmnoop_get_surface_color_transform(struct weston_color_manager *cm_base,
 	/* TODO: Assert surface has no colorspace set */
 	assert(output->color_profile == NULL);
 
+	if (!check_output_eotf_mode(output))
+		return false;
+
 	/* Identity transform */
 	surf_xform->transform = NULL;
 	surf_xform->identity_pipeline = true;
@@ -81,43 +96,29 @@ cmnoop_get_surface_color_transform(struct weston_color_manager *cm_base,
 	return true;
 }
 
-static bool
-cmnoop_get_output_color_transform(struct weston_color_manager *cm_base,
-				  struct weston_output *output,
-				  struct weston_color_transform **xform_out)
+static struct weston_output_color_outcome *
+cmnoop_create_output_color_outcome(struct weston_color_manager *cm_base,
+				   struct weston_output *output)
 {
+	struct weston_output_color_outcome *co;
+
 	assert(output->color_profile == NULL);
 
-	/* Identity transform */
-	*xform_out = NULL;
+	if (!check_output_eotf_mode(output))
+		return NULL;
 
-	return true;
-}
+	co = zalloc(sizeof *co);
+	if (!co)
+		return NULL;
 
-static bool
-cmnoop_get_sRGB_to_output_color_transform(struct weston_color_manager *cm_base,
-					  struct weston_output *output,
-					  struct weston_color_transform **xform_out)
-{
-	assert(output->color_profile == NULL);
+	/* Identity transform on everything */
+	co->from_blend_to_output = NULL;
+	co->from_sRGB_to_blend = NULL;
+	co->from_sRGB_to_output = NULL;
 
-	/* Identity transform */
-	*xform_out = NULL;
+	co->hdr_meta.group_mask = 0;
 
-	return true;
-}
-
-static bool
-cmnoop_get_sRGB_to_blend_color_transform(struct weston_color_manager *cm_base,
-					 struct weston_output *output,
-					 struct weston_color_transform **xform_out)
-{
-	assert(output->color_profile == NULL);
-
-	/* Identity transform */
-	*xform_out = NULL;
-
-	return true;
+	return co;
 }
 
 static bool
@@ -153,13 +154,8 @@ weston_color_manager_noop_create(struct weston_compositor *compositor)
 	cm->base.destroy_color_profile = cmnoop_destroy_color_profile;
 	cm->base.get_color_profile_from_icc = cmnoop_get_color_profile_from_icc;
 	cm->base.destroy_color_transform = cmnoop_destroy_color_transform;
-	cm->base.get_surface_color_transform =
-	      cmnoop_get_surface_color_transform;
-	cm->base.get_output_color_transform = cmnoop_get_output_color_transform;
-	cm->base.get_sRGB_to_output_color_transform =
-	      cmnoop_get_sRGB_to_output_color_transform;
-	cm->base.get_sRGB_to_blend_color_transform =
-	      cmnoop_get_sRGB_to_blend_color_transform;
+	cm->base.get_surface_color_transform = cmnoop_get_surface_color_transform;
+	cm->base.create_output_color_outcome = cmnoop_create_output_color_outcome;
 
 	return &cm->base;
 }

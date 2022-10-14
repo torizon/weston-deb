@@ -40,6 +40,7 @@
 #include <libweston/config-parser.h>
 
 #ifdef HAVE_PANGO
+#include <fontconfig/fontconfig.h>
 #include <pango/pangocairo.h>
 #endif
 
@@ -275,7 +276,6 @@ tile_source(cairo_t *cr, cairo_surface_t *surface,
 	pattern = cairo_pattern_create_for_surface (surface);
 	cairo_pattern_set_filter(pattern, CAIRO_FILTER_NEAREST);
 	cairo_set_source(cr, pattern);
-	cairo_pattern_destroy(pattern);
 
 	for (i = 0; i < 4; i++) {
 		fx = i & 1;
@@ -328,6 +328,9 @@ tile_source(cairo_t *cr, cairo_surface_t *surface,
 	cairo_rectangle(cr, x + width - margin, y + top_margin,
 			margin, height - margin - top_margin);
 	cairo_fill(cr);
+
+	cairo_pattern_destroy(pattern);
+	cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
 }
 
 void
@@ -488,16 +491,26 @@ theme_destroy(struct theme *t)
 static PangoLayout *
 create_layout(cairo_t *cr, const char *title)
 {
+	PangoFontMap *fontmap;
+	PangoContext *context;
 	PangoLayout *layout;
 	PangoFontDescription *desc;
 
-	layout = pango_cairo_create_layout(cr);
+	fontmap = pango_cairo_font_map_new();
+	context = pango_font_map_create_context(fontmap);
+	g_object_unref(fontmap);
+	pango_cairo_font_map_set_default(NULL);
+	pango_cairo_update_context(cr, context);
+	layout = pango_layout_new(context);
+	g_object_unref(context);
+
 	if (title) {
 		pango_layout_set_text(layout, title, -1);
 		desc = pango_font_description_from_string("sans-serif Bold 10");
 		pango_layout_set_font_description(layout, desc);
 		pango_font_description_free(desc);
 	}
+
 	pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
 	pango_layout_set_alignment(layout, PANGO_ALIGN_LEFT);
 	pango_layout_set_auto_dir (layout, FALSE);
@@ -565,6 +578,8 @@ theme_render_frame(struct theme *t,
 		PangoLayout *title_layout;
 		PangoRectangle logical;
 
+		cairo_save(cr);
+
 		title_layout = create_layout(cr, title);
 
 		pango_layout_get_pixel_extents (title_layout, NULL, &logical);
@@ -606,6 +621,11 @@ theme_render_frame(struct theme *t,
 			cairo_set_source_rgb(cr, 0.4, 0.4, 0.4);
 			SHOW_TEXT(cr);
 		}
+
+#ifdef HAVE_PANGO
+		cairo_restore(cr);
+		g_object_unref(title_layout);
+#endif
 	}
 }
 
@@ -661,4 +681,18 @@ theme_get_location(struct theme *t, int x, int y,
 		location = THEME_LOCATION_CLIENT_AREA;
 
 	return location;
+}
+
+/** Cleanup static Cairo/Pango data
+ *
+ * Using Cairo, Pango, PangoCairo, and fontconfig, ends up leaving a trail of
+ * thread-cached data behind us. Clean up what we can.
+ */
+void
+cleanup_after_cairo(void)
+{
+	cairo_debug_reset_static_data();
+#ifdef HAVE_PANGO
+	FcFini();
+#endif
 }

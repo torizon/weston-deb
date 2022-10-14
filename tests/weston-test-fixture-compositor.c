@@ -38,6 +38,7 @@
 #include <fcntl.h>
 
 #include "shared/helpers.h"
+#include "shared/string-helpers.h"
 #include "weston-test-fixture-compositor.h"
 #include "weston.h"
 #include "test-config.h"
@@ -92,6 +93,11 @@ prog_args_fini(struct prog_args *p)
 {
 	int i;
 
+	/* If our args have never been saved, then we haven't called the
+	 * compositor, but we still need to free the args, not leak them. */
+	if (!p->saved)
+		prog_args_save(p);
+
 	if (p->saved) {
 		for (i = 0; i < p->argc; i++)
 			free(p->saved[i]);
@@ -116,7 +122,8 @@ get_lock_path(void)
 		return NULL;
 	}
 
-	if (asprintf(&lock_path, "%s/%s", env_path, suffix) == -1)
+	str_printf(&lock_path, "%s/%s", env_path, suffix);
+	if (!lock_path)
 		return NULL;
 
 	return lock_path;
@@ -200,7 +207,6 @@ backend_to_str(enum weston_compositor_backend b)
 {
 	static const char * const names[] = {
 		[WESTON_BACKEND_DRM] = "drm-backend.so",
-		[WESTON_BACKEND_FBDEV] = "fbdev-backend.so",
 		[WESTON_BACKEND_HEADLESS] = "headless-backend.so",
 		[WESTON_BACKEND_RDP] = "rdp-backend.so",
 		[WESTON_BACKEND_WAYLAND] = "wayland-backend.so",
@@ -285,70 +291,16 @@ execute_compositor(const struct compositor_setup *setup,
 	struct prog_args args;
 	char *tmp;
 	const char *ctmp, *drm_device;
-	int ret, lock_fd = -1;
-
-	if (setenv("WESTON_MODULE_MAP", WESTON_MODULE_MAP, 0) < 0 ||
-	    setenv("WESTON_DATA_DIR", WESTON_DATA_DIR, 0) < 0) {
-		fprintf(stderr, "Error: environment setup failed.\n");
-		return RESULT_HARD_ERROR;
-	}
-
-#ifndef BUILD_DRM_COMPOSITOR
-	if (setup->backend == WESTON_BACKEND_DRM) {
-		fprintf(stderr, "DRM-backend required but not built, skipping.\n");
-		return RESULT_SKIP;
-	}
-#endif
-
-#ifndef BUILD_FBDEV_COMPOSITOR
-	if (setup->backend == WESTON_BACKEND_FBDEV) {
-		fprintf(stderr, "fbdev-backend required but not built, skipping.\n");
-		return RESULT_SKIP;
-	}
-#endif
-
-#ifndef BUILD_RDP_COMPOSITOR
-	if (setup->backend == WESTON_BACKEND_RDP) {
-		fprintf(stderr, "RDP-backend required but not built, skipping.\n");
-		return RESULT_SKIP;
-	}
-#endif
-
-#ifndef BUILD_WAYLAND_COMPOSITOR
-	if (setup->backend == WESTON_BACKEND_WAYLAND) {
-		fprintf(stderr, "wayland-backend required but not built, skipping.\n");
-		return RESULT_SKIP;
-	}
-#endif
-
-#ifndef BUILD_X11_COMPOSITOR
-	if (setup->backend == WESTON_BACKEND_X11) {
-		fprintf(stderr, "X11-backend required but not built, skipping.\n");
-		return RESULT_SKIP;
-	}
-#endif
-
-#ifndef ENABLE_EGL
-	if (setup->renderer == RENDERER_GL) {
-		fprintf(stderr, "GL-renderer required but not built, skipping.\n");
-		return RESULT_SKIP;
-	}
-#endif
-
-#if !TEST_GL_RENDERER
-	if (setup->renderer == RENDERER_GL) {
-		fprintf(stderr, "GL-renderer disabled for tests, skipping.\n");
-		return RESULT_SKIP;
-	}
-#endif
+	int lock_fd = -1;
+	int ret = RESULT_OK;
 
 	prog_args_init(&args);
 
 	/* argv[0] */
-	asprintf(&tmp, "weston-%s", setup->testset_name);
+	str_printf(&tmp, "weston-%s", setup->testset_name);
 	prog_args_take(&args, tmp);
 
-	asprintf(&tmp, "--backend=%s", backend_to_str(setup->backend));
+	str_printf(&tmp, "--backend=%s", backend_to_str(setup->backend));
 	prog_args_take(&args, tmp);
 
 	if (setup->backend == WESTON_BACKEND_DRM) {
@@ -362,7 +314,7 @@ execute_compositor(const struct compositor_setup *setup,
 			ret = RESULT_SKIP;
 			goto out;
 		}
-		asprintf(&tmp, "--drm-device=%s", drm_device);
+		str_printf(&tmp, "--drm-device=%s", drm_device);
 		prog_args_take(&args, tmp);
 
 		prog_args_take(&args, strdup("--seat=weston-test-seat"));
@@ -379,36 +331,35 @@ execute_compositor(const struct compositor_setup *setup,
 	/* Test suite needs the debug protocol to be able to take screenshots */
 	prog_args_take(&args, strdup("--debug"));
 
-	asprintf(&tmp, "--socket=%s", setup->testset_name);
+	str_printf(&tmp, "--socket=%s", setup->testset_name);
 	prog_args_take(&args, tmp);
 
-	asprintf(&tmp, "--modules=%s%s%s", TESTSUITE_PLUGIN_PATH,
-		 setup->extra_module ? "," : "",
-		 setup->extra_module ? setup->extra_module : "");
+	str_printf(&tmp, "--modules=%s%s%s", TESTSUITE_PLUGIN_PATH,
+		   setup->extra_module ? "," : "",
+		   setup->extra_module ? setup->extra_module : "");
 	prog_args_take(&args, tmp);
 
-	if (setup->backend != WESTON_BACKEND_DRM &&
-	    setup->backend != WESTON_BACKEND_FBDEV) {
-		asprintf(&tmp, "--width=%d", setup->width);
+	if (setup->backend != WESTON_BACKEND_DRM) {
+		str_printf(&tmp, "--width=%d", setup->width);
 		prog_args_take(&args, tmp);
 
-		asprintf(&tmp, "--height=%d", setup->height);
+		str_printf(&tmp, "--height=%d", setup->height);
 		prog_args_take(&args, tmp);
 	}
 
 	if (setup->scale != 1) {
-		asprintf(&tmp, "--scale=%d", setup->scale);
+		str_printf(&tmp, "--scale=%d", setup->scale);
 		prog_args_take(&args, tmp);
 	}
 
 	if (setup->transform != WL_OUTPUT_TRANSFORM_NORMAL) {
-		asprintf(&tmp, "--transform=%s",
-			 transform_to_str(setup->transform));
+		str_printf(&tmp, "--transform=%s",
+			   transform_to_str(setup->transform));
 		prog_args_take(&args, tmp);
 	}
 
 	if (setup->config_file) {
-		asprintf(&tmp, "--config=%s", setup->config_file);
+		str_printf(&tmp, "--config=%s", setup->config_file);
 		prog_args_take(&args, tmp);
 		free(setup->config_file);
 	} else {
@@ -419,11 +370,11 @@ execute_compositor(const struct compositor_setup *setup,
 	if (ctmp)
 		prog_args_take(&args, strdup(ctmp));
 
-	asprintf(&tmp, "--shell=%s", shell_to_str(setup->shell));
+	str_printf(&tmp, "--shell=%s", shell_to_str(setup->shell));
 	prog_args_take(&args, tmp);
 
 	if (setup->logging_scopes) {
-		asprintf(&tmp, "--logger-scopes=%s", setup->logging_scopes);
+		str_printf(&tmp, "--logger-scopes=%s", setup->logging_scopes);
 		prog_args_take(&args, tmp);
 	}
 
@@ -433,7 +384,50 @@ execute_compositor(const struct compositor_setup *setup,
 	test_data.test_quirks = setup->test_quirks;
 	test_data.test_private_data = data;
 	prog_args_save(&args);
-	ret = wet_main(args.argc, args.argv, &test_data);
+
+	if (setenv("WESTON_MODULE_MAP", WESTON_MODULE_MAP, 0) < 0 ||
+	    setenv("WESTON_DATA_DIR", WESTON_DATA_DIR, 0) < 0) {
+		fprintf(stderr, "Error: environment setup failed.\n");
+		ret = RESULT_HARD_ERROR;
+	}
+
+#ifndef BUILD_DRM_COMPOSITOR
+	if (setup->backend == WESTON_BACKEND_DRM) {
+		fprintf(stderr, "DRM-backend required but not built, skipping.\n");
+		ret = RESULT_SKIP;
+	}
+#endif
+
+#ifndef BUILD_RDP_COMPOSITOR
+	if (setup->backend == WESTON_BACKEND_RDP) {
+		fprintf(stderr, "RDP-backend required but not built, skipping.\n");
+		ret = RESULT_SKIP;
+	}
+#endif
+
+#ifndef BUILD_WAYLAND_COMPOSITOR
+	if (setup->backend == WESTON_BACKEND_WAYLAND) {
+		fprintf(stderr, "wayland-backend required but not built, skipping.\n");
+		ret = RESULT_SKIP;
+	}
+#endif
+
+#ifndef BUILD_X11_COMPOSITOR
+	if (setup->backend == WESTON_BACKEND_X11) {
+		fprintf(stderr, "X11-backend required but not built, skipping.\n");
+		ret = RESULT_SKIP;
+	}
+#endif
+
+#ifndef ENABLE_EGL
+	if (setup->renderer == RENDERER_GL) {
+		fprintf(stderr, "GL-renderer required but not built, skipping.\n");
+		ret = RESULT_SKIP;
+	}
+#endif
+
+	if (ret == RESULT_OK)
+		ret = wet_main(args.argc, args.argv, &test_data);
 
 out:
 	prog_args_fini(&args);
@@ -472,7 +466,8 @@ open_ini_file(struct compositor_setup *setup)
 	wd = realpath(".", NULL);
 	assert(wd);
 
-	if (asprintf(&tmp_path, "%s/%s.ini", wd, setup->testset_name) == -1) {
+	str_printf(&tmp_path, "%s/%s.ini", wd, setup->testset_name);
+	if (!tmp_path) {
 		fprintf(stderr, "Fail formatting Weston.ini file name.\n");
 		goto out;
 	}

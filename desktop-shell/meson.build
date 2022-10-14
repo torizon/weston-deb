@@ -3,9 +3,7 @@ if get_option('shell-desktop')
 
 	srcs_shell_desktop = [
 		'shell.c',
-		'exposay.c',
 		'input-panel.c',
-		'../shared/shell-utils.c',
 		weston_desktop_shell_server_protocol_h,
 		weston_desktop_shell_protocol_c,
 		input_method_unstable_v1_server_protocol_h,
@@ -15,8 +13,8 @@ if get_option('shell-desktop')
 		dep_libm,
 		dep_libexec_weston,
 		dep_libshared,
-		dep_lib_desktop,
 		dep_libweston_public,
+		dep_shell_utils,
 	]
 	plugin_shell_desktop = shared_library(
 		'desktop-shell',

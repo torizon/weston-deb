@@ -46,9 +46,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <libweston/matrix.h>
 #include "shared/helpers.h"
 #include "shared/platform.h"
 #include "shared/weston-egl-ext.h"
+#include "shared/xalloc.h"
 
 struct window;
 struct seat;
@@ -73,6 +75,8 @@ struct display {
 	} egl;
 	struct window *window;
 
+	struct wl_list output_list; /* struct output::link */
+
 	PFNEGLSWAPBUFFERSWITHDAMAGEEXTPROC swap_buffers_with_damage;
 };
 
@@ -82,22 +86,45 @@ struct geometry {
 
 struct window {
 	struct display *display;
-	struct geometry geometry, window_size;
+	struct geometry window_size;
+	struct geometry logical_size;
+	struct geometry buffer_size;
+	int32_t buffer_scale;
+	enum wl_output_transform buffer_transform;
+	bool needs_buffer_geometry_update;
+
 	struct {
 		GLuint rotation_uniform;
 		GLuint pos;
 		GLuint col;
 	} gl;
 
-	uint32_t benchmark_time, frames;
+	uint32_t frames;
+	uint32_t initial_frame_time;
+	uint32_t benchmark_time;
 	struct wl_egl_window *native;
 	struct wl_surface *surface;
 	struct xdg_surface *xdg_surface;
 	struct xdg_toplevel *xdg_toplevel;
 	EGLSurface egl_surface;
-	struct wl_callback *callback;
-	int fullscreen, maximized, opaque, buffer_size, frame_sync, delay;
+	int fullscreen, maximized, opaque, buffer_bpp, frame_sync, delay;
 	bool wait_for_configure;
+
+	struct wl_list window_output_list; /* struct window_output::link */
+};
+
+struct output {
+	struct display *display;
+	struct wl_output *wl_output;
+	uint32_t name;
+	struct wl_list link; /* struct display::output_list */
+	enum wl_output_transform transform;
+	int32_t scale;
+};
+
+struct window_output {
+	struct output *output;
+	struct wl_list link; /* struct window::window_output_list */
 };
 
 static const char *vert_shader_text =
@@ -155,7 +182,7 @@ init_egl(struct display *display, struct window *window)
 	EGLConfig *configs;
 	EGLBoolean ret;
 
-	if (window->opaque || window->buffer_size == 16)
+	if (window->opaque || window->buffer_bpp == 16)
 		config_attribs[9] = 0;
 
 	display->egl.dpy =
@@ -179,13 +206,13 @@ init_egl(struct display *display, struct window *window)
 	assert(ret && n >= 1);
 
 	for (i = 0; i < n; i++) {
-		EGLint buffer_size, red_size;
+		EGLint buffer_bpp, red_size;
 		eglGetConfigAttrib(display->egl.dpy,
-				   configs[i], EGL_BUFFER_SIZE, &buffer_size);
+				   configs[i], EGL_BUFFER_SIZE, &buffer_bpp);
 		eglGetConfigAttrib(display->egl.dpy,
 				   configs[i], EGL_RED_SIZE, &red_size);
-		if ((window->buffer_size == 0 ||
-		     window->buffer_size == buffer_size) && red_size < 10) {
+		if ((window->buffer_bpp == 0 ||
+		     window->buffer_bpp == buffer_bpp) && red_size < 10) {
 			display->egl.conf = configs[i];
 			break;
 		}
@@ -193,7 +220,7 @@ init_egl(struct display *display, struct window *window)
 	free(configs);
 	if (display->egl.conf == NULL) {
 		fprintf(stderr, "did not find config with buffer size %d\n",
-			window->buffer_size);
+			window->buffer_bpp);
 		exit(EXIT_FAILURE);
 	}
 
@@ -256,6 +283,92 @@ create_shader(struct window *window, const char *source, GLenum shader_type)
 	return shader;
 }
 
+static int32_t
+compute_buffer_scale(struct window *window)
+{
+	struct window_output *window_output;
+	int32_t scale = 1;
+
+	wl_list_for_each(window_output, &window->window_output_list, link) {
+		if (window_output->output->scale > scale)
+			scale = window_output->output->scale;
+	}
+
+	return scale;
+}
+
+static enum wl_output_transform
+compute_buffer_transform(struct window *window)
+{
+	struct window_output *window_output;
+	enum wl_output_transform transform = WL_OUTPUT_TRANSFORM_NORMAL;
+
+	wl_list_for_each(window_output, &window->window_output_list, link) {
+		/* If the surface spans over multiple outputs the optimal
+		 * transform value can be ambiguous. Thus just return the value
+		 * from the oldest entered output.
+		 */
+		transform = window_output->output->transform;
+		break;
+	}
+
+	return transform;
+}
+
+static void
+update_buffer_geometry(struct window *window)
+{
+	enum wl_output_transform new_buffer_transform;
+	int32_t new_buffer_scale;
+	struct geometry new_buffer_size;
+
+	new_buffer_transform = compute_buffer_transform(window);
+	if (window->buffer_transform != new_buffer_transform) {
+		window->buffer_transform = new_buffer_transform;
+		wl_surface_set_buffer_transform(window->surface,
+						window->buffer_transform);
+	}
+
+	new_buffer_scale = compute_buffer_scale(window);
+	if (window->buffer_scale != new_buffer_scale) {
+		window->buffer_scale = new_buffer_scale;
+		wl_surface_set_buffer_scale(window->surface,
+					    window->buffer_scale);
+	}
+
+	switch (window->buffer_transform) {
+	case WL_OUTPUT_TRANSFORM_NORMAL:
+	case WL_OUTPUT_TRANSFORM_180:
+	case WL_OUTPUT_TRANSFORM_FLIPPED:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+		new_buffer_size.width = window->logical_size.width;
+		new_buffer_size.height = window->logical_size.height;
+		break;
+	case WL_OUTPUT_TRANSFORM_90:
+	case WL_OUTPUT_TRANSFORM_270:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+		new_buffer_size.width = window->logical_size.height;
+		new_buffer_size.height = window->logical_size.width;
+		break;
+	}
+
+	new_buffer_size.width *= window->buffer_scale;
+	new_buffer_size.height *= window->buffer_scale;
+
+	if (window->buffer_size.width != new_buffer_size.width ||
+	    window->buffer_size.height != new_buffer_size.height) {
+		window->buffer_size = new_buffer_size;
+		if (window->native)
+			wl_egl_window_resize(window->native,
+					     window->buffer_size.width,
+					     window->buffer_size.height, 0, 0);
+	}
+
+	window->needs_buffer_geometry_update = false;
+}
+
+
 static void
 init_gl(struct window *window)
 {
@@ -264,9 +377,12 @@ init_gl(struct window *window)
 	GLint status;
 	EGLBoolean ret;
 
+	if (window->needs_buffer_geometry_update)
+		update_buffer_geometry(window);
+
 	window->native = wl_egl_window_create(window->surface,
-					      window->geometry.width,
-					      window->geometry.height);
+					      window->buffer_size.width,
+					      window->buffer_size.height);
 	window->egl_surface =
 		weston_platform_create_egl_surface(window->display->egl.dpy,
 						   window->display->egl.conf,
@@ -275,6 +391,9 @@ init_gl(struct window *window)
 	ret = eglMakeCurrent(window->display->egl.dpy, window->egl_surface,
 			     window->egl_surface, window->display->egl.ctx);
 	assert(ret == EGL_TRUE);
+
+	if (!window->frame_sync)
+		eglSwapInterval(window->display->egl.dpy, 0);
 
 	frag = create_shader(window, frag_shader_text, GL_FRAGMENT_SHADER);
 	vert = create_shader(window, vert_shader_text, GL_VERTEX_SHADER);
@@ -348,16 +467,13 @@ handle_toplevel_configure(void *data, struct xdg_toplevel *toplevel,
 			window->window_size.width = width;
 			window->window_size.height = height;
 		}
-		window->geometry.width = width;
-		window->geometry.height = height;
+		window->logical_size.width = width;
+		window->logical_size.height = height;
 	} else if (!window->fullscreen && !window->maximized) {
-		window->geometry = window->window_size;
+		window->logical_size = window->window_size;
 	}
 
-	if (window->native)
-		wl_egl_window_resize(window->native,
-				     window->geometry.width,
-				     window->geometry.height, 0, 0);
+	window->needs_buffer_geometry_update = true;
 }
 
 static void
@@ -372,11 +488,79 @@ static const struct xdg_toplevel_listener xdg_toplevel_listener = {
 };
 
 static void
+add_window_output(struct window *window, struct wl_output *wl_output)
+{
+	struct output *output;
+	struct output *output_found = NULL;
+	struct window_output *window_output;
+
+	wl_list_for_each(output, &window->display->output_list, link) {
+		if (output->wl_output == wl_output) {
+			output_found = output;
+			break;
+		}
+	}
+
+	if (!output_found)
+		return;
+
+	window_output = xmalloc(sizeof *window_output);
+	window_output->output = output_found;
+
+	wl_list_insert(window->window_output_list.prev, &window_output->link);
+	window->needs_buffer_geometry_update = true;
+}
+
+static void
+destroy_window_output(struct window *window, struct wl_output *wl_output)
+{
+	struct window_output *window_output;
+	struct window_output *window_output_found = NULL;
+
+	wl_list_for_each(window_output, &window->window_output_list, link) {
+		if (window_output->output->wl_output == wl_output) {
+			window_output_found = window_output;
+			break;
+		}
+	}
+
+	if (window_output_found) {
+		wl_list_remove(&window_output_found->link);
+		free(window_output_found);
+		window->needs_buffer_geometry_update = true;
+	}
+}
+
+static void
+surface_enter(void *data,
+	      struct wl_surface *wl_surface, struct wl_output *wl_output)
+{
+	struct window *window = data;
+
+	add_window_output(window, wl_output);
+}
+
+static void
+surface_leave(void *data,
+	      struct wl_surface *wl_surface, struct wl_output *wl_output)
+{
+	struct window *window = data;
+
+	destroy_window_output(window, wl_output);
+}
+
+static const struct wl_surface_listener surface_listener = {
+	surface_enter,
+	surface_leave
+};
+
+static void
 create_surface(struct window *window)
 {
 	struct display *display = window->display;
 
 	window->surface = wl_compositor_create_surface(display->compositor);
+	wl_surface_add_listener(window->surface, &surface_listener, window);
 
 	window->xdg_surface = xdg_wm_base_get_xdg_surface(display->wm_base,
 							  window->surface);
@@ -399,9 +583,6 @@ create_surface(struct window *window)
 
 	window->wait_for_configure = true;
 	wl_surface_commit(window->surface);
-
-	if (!window->frame_sync)
-		eglSwapInterval(display->egl.dpy, 0);
 }
 
 static void
@@ -421,15 +602,12 @@ destroy_surface(struct window *window)
 	if (window->xdg_surface)
 		xdg_surface_destroy(window->xdg_surface);
 	wl_surface_destroy(window->surface);
-
-	if (window->callback)
-		wl_callback_destroy(window->callback);
 }
 
+
 static void
-redraw(void *data, struct wl_callback *callback, uint32_t time)
+redraw(struct window *window)
 {
-	struct window *window = data;
 	struct display *display = window->display;
 	static const GLfloat verts[3][2] = {
 		{ -0.5, -0.5 },
@@ -442,28 +620,22 @@ redraw(void *data, struct wl_callback *callback, uint32_t time)
 		{ 0, 0, 1 }
 	};
 	GLfloat angle;
-	GLfloat rotation[4][4] = {
-		{ 1, 0, 0, 0 },
-		{ 0, 1, 0, 0 },
-		{ 0, 0, 1, 0 },
-		{ 0, 0, 0, 1 }
-	};
+	struct weston_matrix rotation;
 	static const uint32_t speed_div = 5, benchmark_interval = 5;
 	struct wl_region *region;
 	EGLint rect[4];
 	EGLint buffer_age = 0;
 	struct timeval tv;
 
-	assert(window->callback == callback);
-	window->callback = NULL;
-
-	if (callback)
-		wl_callback_destroy(callback);
+	if (window->needs_buffer_geometry_update)
+		update_buffer_geometry(window);
 
 	gettimeofday(&tv, NULL);
-	time = tv.tv_sec * 1000 + tv.tv_usec / 1000;
-	if (window->frames == 0)
+	uint32_t time = tv.tv_sec * 1000 + tv.tv_usec / 1000;
+	if (window->frames == 0) {
+		window->initial_frame_time = time;
 		window->benchmark_time = time;
+	}
 	if (time - window->benchmark_time > (benchmark_interval * 1000)) {
 		printf("%d frames in %d seconds: %f fps\n",
 		       window->frames,
@@ -473,20 +645,51 @@ redraw(void *data, struct wl_callback *callback, uint32_t time)
 		window->frames = 0;
 	}
 
-	angle = (time / speed_div) % 360 * M_PI / 180.0;
-	rotation[0][0] =  cos(angle);
-	rotation[0][2] =  sin(angle);
-	rotation[2][0] = -sin(angle);
-	rotation[2][2] =  cos(angle);
+	weston_matrix_init(&rotation);
+	angle = ((time - window->initial_frame_time) / speed_div) % 360 * M_PI / 180.0;
+	rotation.d[0] =   cos(angle);
+	rotation.d[2] =   sin(angle);
+	rotation.d[8] =  -sin(angle);
+	rotation.d[10] =  cos(angle);
+
+	switch (window->buffer_transform) {
+	case WL_OUTPUT_TRANSFORM_FLIPPED:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+		weston_matrix_scale(&rotation, -1, 1, 1);
+		break;
+	default:
+		break;
+	}
+
+	switch (window->buffer_transform) {
+	default:
+	case WL_OUTPUT_TRANSFORM_NORMAL:
+	case WL_OUTPUT_TRANSFORM_FLIPPED:
+		break;
+	case WL_OUTPUT_TRANSFORM_90:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_90:
+		weston_matrix_rotate_xy(&rotation, 0, 1);
+		break;
+	case WL_OUTPUT_TRANSFORM_180:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_180:
+		weston_matrix_rotate_xy(&rotation, -1, 0);
+		break;
+	case WL_OUTPUT_TRANSFORM_270:
+	case WL_OUTPUT_TRANSFORM_FLIPPED_270:
+		weston_matrix_rotate_xy(&rotation, 0, -1);
+		break;
+	}
 
 	if (display->swap_buffers_with_damage)
 		eglQuerySurface(display->egl.dpy, window->egl_surface,
 				EGL_BUFFER_AGE_EXT, &buffer_age);
 
-	glViewport(0, 0, window->geometry.width, window->geometry.height);
+	glViewport(0, 0, window->buffer_size.width, window->buffer_size.height);
 
 	glUniformMatrix4fv(window->gl.rotation_uniform, 1, GL_FALSE,
-			   (GLfloat *) rotation);
+			   (GLfloat *) rotation.d);
 
 	if (window->opaque || window->fullscreen)
 		glClearColor(0.0, 0.0, 0.0, 1);
@@ -508,9 +711,7 @@ redraw(void *data, struct wl_callback *callback, uint32_t time)
 
 	if (window->opaque || window->fullscreen) {
 		region = wl_compositor_create_region(window->display->compositor);
-		wl_region_add(region, 0, 0,
-			      window->geometry.width,
-			      window->geometry.height);
+		wl_region_add(region, 0, 0, INT32_MAX, INT32_MAX);
 		wl_surface_set_opaque_region(window->surface, region);
 		wl_region_destroy(region);
 	} else {
@@ -518,10 +719,10 @@ redraw(void *data, struct wl_callback *callback, uint32_t time)
 	}
 
 	if (display->swap_buffers_with_damage && buffer_age > 0) {
-		rect[0] = window->geometry.width / 4 - 1;
-		rect[1] = window->geometry.height / 4 - 1;
-		rect[2] = window->geometry.width / 2 + 2;
-		rect[3] = window->geometry.height / 2 + 2;
+		rect[0] = window->buffer_size.width / 4 - 1;
+		rect[1] = window->buffer_size.height / 4 - 1;
+		rect[2] = window->buffer_size.width / 2 + 2;
+		rect[3] = window->buffer_size.height / 2 + 2;
 		display->swap_buffers_with_damage(display->egl.dpy,
 						  window->egl_surface,
 						  rect, 1);
@@ -746,6 +947,92 @@ static const struct xdg_wm_base_listener wm_base_listener = {
 };
 
 static void
+display_handle_geometry(void *data,
+			struct wl_output *wl_output,
+			int32_t x, int32_t y,
+			int32_t physical_width,
+			int32_t physical_height,
+			int32_t subpixel,
+			const char *make,
+			const char *model,
+			int32_t transform)
+{
+	struct output *output = data;
+
+	output->transform = transform;
+	output->display->window->needs_buffer_geometry_update = true;
+}
+
+static void
+display_handle_mode(void *data,
+		    struct wl_output *wl_output,
+		    uint32_t flags,
+		    int32_t width,
+		    int32_t height,
+		    int32_t refresh)
+{
+}
+
+static void
+display_handle_done(void *data,
+		     struct wl_output *wl_output)
+{
+}
+
+static void
+display_handle_scale(void *data,
+		     struct wl_output *wl_output,
+		     int32_t scale)
+{
+	struct output *output = data;
+
+	output->scale = scale;
+	output->display->window->needs_buffer_geometry_update = true;
+}
+
+static const struct wl_output_listener output_listener = {
+	display_handle_geometry,
+	display_handle_mode,
+	display_handle_done,
+	display_handle_scale
+};
+
+static void
+display_add_output(struct display *d, uint32_t name)
+{
+	struct output *output;
+
+	output = xzalloc(sizeof *output);
+	output->display = d;
+	output->scale = 1;
+	output->wl_output =
+		wl_registry_bind(d->registry, name, &wl_output_interface, 2);
+	output->name = name;
+	wl_list_insert(d->output_list.prev, &output->link);
+
+	wl_output_add_listener(output->wl_output, &output_listener, output);
+}
+
+static void
+display_destroy_output(struct display *d, struct output *output)
+{
+	destroy_window_output(d->window, output->wl_output);
+	wl_output_destroy(output->wl_output);
+	wl_list_remove(&output->link);
+	free(output);
+}
+
+static void
+display_destroy_outputs(struct display *d)
+{
+	struct output *tmp;
+	struct output *output;
+
+	wl_list_for_each_safe(output, tmp, &d->output_list, link)
+		display_destroy_output(d, output);
+}
+
+static void
 registry_handle_global(void *data, struct wl_registry *registry,
 		       uint32_t name, const char *interface, uint32_t version)
 {
@@ -778,6 +1065,8 @@ registry_handle_global(void *data, struct wl_registry *registry,
 			fprintf(stderr, "unable to load default left pointer\n");
 			// TODO: abort ?
 		}
+	} else if (strcmp(interface, "wl_output") == 0 && version >= 2) {
+		display_add_output(d, name);
 	}
 }
 
@@ -785,6 +1074,15 @@ static void
 registry_handle_global_remove(void *data, struct wl_registry *registry,
 			      uint32_t name)
 {
+	struct display *d = data;
+	struct output *output;
+
+	wl_list_for_each(output, &d->output_list, link) {
+		if (output->name == name) {
+			display_destroy_output(d, output);
+			break;
+		}
+	}
 }
 
 static const struct wl_registry_listener registry_listener = {
@@ -823,12 +1121,18 @@ main(int argc, char **argv)
 
 	window.display = &display;
 	display.window = &window;
-	window.geometry.width  = 250;
-	window.geometry.height = 250;
-	window.window_size = window.geometry;
-	window.buffer_size = 0;
+	window.buffer_size.width  = 250;
+	window.buffer_size.height = 250;
+	window.window_size = window.buffer_size;
+	window.buffer_scale = 1;
+	window.buffer_transform = WL_OUTPUT_TRANSFORM_NORMAL;
+	window.needs_buffer_geometry_update = false;
+	window.buffer_bpp = 0;
 	window.frame_sync = 1;
 	window.delay = 0;
+
+	wl_list_init(&display.output_list);
+	wl_list_init(&window.window_output_list);
 
 	for (i = 1; i < argc; i++) {
 		if (strcmp("-d", argv[i]) == 0 && i+1 < argc)
@@ -840,7 +1144,7 @@ main(int argc, char **argv)
 		else if (strcmp("-o", argv[i]) == 0)
 			window.opaque = 1;
 		else if (strcmp("-s", argv[i]) == 0)
-			window.buffer_size = 16;
+			window.buffer_bpp = 16;
 		else if (strcmp("-b", argv[i]) == 0)
 			window.frame_sync = 0;
 		else if (strcmp("-h", argv[i]) == 0)
@@ -887,7 +1191,7 @@ main(int argc, char **argv)
 
 	while (running && ret != -1) {
 		ret = wl_display_dispatch_pending(display.display);
-		redraw(&window, NULL, 0);
+		redraw(&window);
 	}
 
 	fprintf(stderr, "simple-egl exiting\n");
@@ -897,6 +1201,8 @@ main(int argc, char **argv)
 
 	wl_surface_destroy(display.cursor_surface);
 out_no_xdg_shell:
+	display_destroy_outputs(&display);
+
 	if (display.cursor_theme)
 		wl_cursor_theme_destroy(display.cursor_theme);
 

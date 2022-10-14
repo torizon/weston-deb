@@ -2,7 +2,7 @@ plugin_test_shell_desktop = shared_library(
 	'weston-test-desktop-shell',
 	'weston-test-desktop-shell.c',
 	include_directories: common_inc,
-	dependencies: [ dep_lib_desktop, dep_libweston_public, dep_libexec_weston ],
+	dependencies: [ dep_libweston_public, dep_libexec_weston, dep_shell_utils ],
 	name_prefix: '',
 	install: false
 )
@@ -14,6 +14,7 @@ lib_test_runner = static_library(
 	dependencies: [
 		dep_libweston_private_h_deps,
 		dep_wayland_client,
+                dep_libdl,
 	],
 	include_directories: common_inc,
 	install: false,
@@ -29,8 +30,9 @@ lib_test_client = static_library(
 		'weston-test-client-helper.c',
 		'weston-test-fixture-compositor.c',
 		weston_test_client_protocol_h,
-		weston_screenshooter_protocol_c,
 		weston_test_protocol_c,
+		weston_screenshooter_client_protocol_h,
+		weston_screenshooter_protocol_c,
 		viewporter_client_protocol_h,
 		viewporter_protocol_c,
 		'color_util.h',
@@ -57,6 +59,21 @@ dep_test_client = declare_dependency(
 		dep_pixman,
 		dependency('libudev', version: '>= 136'),
 	]
+)
+
+lib_lcms_util = static_library(
+	'lib_lcms_util',
+	[ 'lcms_util.c' ],
+	include_directories: common_inc,
+	dependencies: [
+		dep_lcms2, dep_libm
+	],
+	build_by_default: false,
+	install: false,
+)
+dep_lcms_util = declare_dependency(
+	link_with: lib_lcms_util,
+	dependencies: [ dep_lcms2 ]
 )
 
 exe_plugin_test = shared_library(
@@ -90,8 +107,6 @@ lib_zuc = static_library(
 	'../tools/zunitc/inc/zunitc/zunitc_impl.h',
 	'../tools/zunitc/src/zuc_base_logger.c',
 	'../tools/zunitc/src/zuc_base_logger.h',
-	'../tools/zunitc/src/zuc_collector.c',
-	'../tools/zunitc/src/zuc_collector.h',
 	'../tools/zunitc/src/zuc_context.h',
 	'../tools/zunitc/src/zuc_event.h',
 	'../tools/zunitc/src/zuc_event_listener.h',
@@ -126,7 +141,12 @@ tests = [
 	},
 	{	'name': 'bad-buffer', },
 	{	'name': 'buffer-transforms', },
+	{
+		'name': 'color-metadata-errors',
+		'dep_objs': dep_libexec_weston,
+	},
 	{	'name': 'color-manager', },
+        {       'name': 'custom-env', },
 	{	'name': 'devices', },
 	{
 		'name': 'drm-formats',
@@ -151,6 +171,10 @@ tests = [
 			linux_explicit_synchronization_unstable_v1_client_protocol_h,
 			linux_explicit_synchronization_unstable_v1_protocol_c,
 		],
+	},
+	{
+		'name': 'matrix',
+		'dep_objs': [ dep_libm ]
 	},
 	{	'name': 'output-damage', },
 	{	'name': 'output-transforms', },
@@ -181,6 +205,14 @@ tests = [
 			xdg_shell_protocol_c,
 		],
 	},
+	{
+		'name': 'single-pixel-buffer',
+		'sources': [
+			'single-pixel-buffer-test.c',
+			single_pixel_buffer_v1_client_protocol_h,
+			single_pixel_buffer_v1_protocol_c,
+		]
+	},
 	{	'name': 'string', },
 	{	'name': 'subsurface', },
 	{	'name': 'subsurface-shot', },
@@ -203,10 +235,6 @@ tests = [
 			input_timestamps_unstable_v1_protocol_c,
 		],
 	},
-	{
-		'name': 'vertex-clip',
-		'dep_objs': dep_vertex_clipping,
-	},
 	{	'name': 'viewporter', },
 	{	'name': 'viewporter-shot', },
 	{
@@ -220,15 +248,39 @@ tests = [
 	{	'name': 'safe-signal-output-removal',
 		'sources': [
 		  'safe-signal-output-removal-test.c',
-		  '../shared/shell-utils.c',
 		],
-		'dep_objs': [ dep_lib_desktop ]
+		'dep_objs': [ dep_shell_utils ]
 	},
 ]
 
+if get_option('renderer-gl')
+	tests += {
+		'name': 'vertex-clip',
+		'link_with': plugin_gl,
+	}
+
+endif
+
+if get_option('color-management-lcms')
+	if not dep_lcms2.found()
+		error('color-management-lcms tests require lcms2 which was not found. Or, you can use \'-Dcolor-management-lcms=false\'.')
+	endif
+	tests += [
+		{
+			'name': 'color-icc-output',
+			'dep_objs': [ dep_libm, dep_lcms_util ]
+		},
+		{	'name': 'color-metadata-parsing' },
+		{
+			'name': 'lcms-util',
+			'dep_objs': [ dep_lcms_util ]
+		},
+	]
+endif
+
+
 tests_standalone = [
 	['config-parser', [], [ dep_zucmain ]],
-	['matrix', [], [ dep_libm, dep_matrix_c ]],
 	['timespec', [], [ dep_zucmain ]],
 	['zuc',
 		[
@@ -319,12 +371,12 @@ foreach t : tests
 		t_name,
 		t_sources,
 		c_args: [
-			'-DUNIT_TEST',
 			'-DTHIS_TEST_NAME="' + t_name + '"',
 		],
 		build_by_default: true,
 		include_directories: common_inc,
 		dependencies: t_deps,
+		link_with: t.get('link_with', []),
 		install: false,
 	)
 
@@ -362,7 +414,6 @@ foreach t : tests_standalone
 	exe_t = executable(
 		'test-@0@'.format(t.get(0)),
 		srcs_t,
-		c_args: [ '-DUNIT_TEST' ],
 		build_by_default: true,
 		include_directories: common_inc,
 		dependencies: deps_t,

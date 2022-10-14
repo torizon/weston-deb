@@ -18,6 +18,12 @@ bugs and shortcomings, we avoid unknown or variable behaviour as much as
 possible, including variable performance such as occasional spikes in frame
 display time.
 
+Weston and libweston are not suitable for memory constrained environments
+where the compositor is expected to continue running even in the face of
+trivial memory allocations failing. If standard functions like `malloc()`
+fail for small allocations,
+[you can expect libweston to abort](https://gitlab.freedesktop.org/wayland/weston/-/issues/631).
+
 A small suite of example or demo clients are also provided: though they can be
 useful in themselves, their main purpose is to be an example or test case for
 others building compositors or clients.
@@ -92,13 +98,6 @@ Help is available by running `weston --help`, or `man weston`, which will list
 the available configuration options and display backends. It can also be
 configured through a file on disk; more information on this can be found through
 `man weston.ini`.
-
-In some special cases, such as when running remotely or without logind's session
-control, Weston may not be able to run directly from a text console. In these
-situations, you can instead execute the `weston-launch` helper, which will gain
-privileged access to input and output devices by running as root, then granting
-access to the main Weston binary running as your user. Running Weston this way
-is not recommended unless necessary.
 
 Documentation
 =============
@@ -294,7 +293,7 @@ Details:
 
 - Child process execution and management will be outside of libweston.
 
-- The different backends (drm, fbdev, x11, etc) will be an internal
+- The different backends (drm, x11, etc) will be an internal
   detail of libweston. Libweston will not support third party
   backends. However, hosting programs need to handle
   backend-specific configuration due to differences in behaviour and
@@ -308,18 +307,11 @@ Details:
 
 - xwayland ???
 
-- weston-launch is still with libweston even though it can only launch
-  Weston and nothing else. We would like to allow it to launch any compositor,
-  but since it gives by design root access to input devices and DRM, how can
-  we restrict it to intended programs?
-
 There are still many more details to be decided.
 
 
 For packagers
 -------------
-
-Always build Weston with --with-cairo=image.
 
 The Weston project is (will be) intended to be split into several
 binary packages, each with its own dependencies. The maximal split
@@ -337,15 +329,13 @@ would be roughly like this:
 
 - xwayland (depends on X11/xcb libs)
 
-- fbdev-backend (depends on libudev...)
-
 - rdp-backend (depends on freerdp)
 
 - weston (the executable, not parallel-installable):
 	+ desktop shell
 	+ ivi-shell
 	+ fullscreen shell
-	+ weston-info (deprecated), weston-terminal, etc. we install by default
+	+ weston-terminal, etc. we install by default
 	+ screen-share
 
 - weston demos (not parallel-installable)

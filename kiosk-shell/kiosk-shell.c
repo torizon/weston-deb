@@ -33,7 +33,7 @@
 #include "kiosk-shell-grab.h"
 #include "compositor/weston.h"
 #include "shared/helpers.h"
-#include "shared/shell-utils.h"
+#include "shell-utils.h"
 
 #include <libweston/xwayland-api.h>
 
@@ -480,13 +480,14 @@ static void
 kiosk_shell_output_recreate_background(struct kiosk_shell_output *shoutput)
 {
 	struct kiosk_shell *shell = shoutput->shell;
+	struct weston_compositor *ec = shell->compositor;
 	struct weston_output *output = shoutput->output;
 	struct weston_config_section *shell_section = NULL;
 	uint32_t bg_color = 0x0;
-	struct weston_solid_color_surface solid_surface = {};
+	struct weston_curtain_params curtain_params = {};
 
-	if (shoutput->background_view)
-		weston_surface_destroy(shoutput->background_view->surface);
+	if (shoutput->curtain)
+		weston_curtain_destroy(shoutput->curtain);
 
 	if (!output)
 		return;
@@ -497,31 +498,33 @@ kiosk_shell_output_recreate_background(struct kiosk_shell_output *shoutput)
 		weston_config_section_get_color(shell_section, "background-color",
 						&bg_color, 0x00000000);
 
-	solid_surface.r = ((bg_color >> 16) & 0xff) / 255.0;
-	solid_surface.g = ((bg_color >> 8) & 0xff) / 255.0;
-	solid_surface.b = ((bg_color >> 0) & 0xff) / 255.0;
+	curtain_params.r = ((bg_color >> 16) & 0xff) / 255.0;
+	curtain_params.g = ((bg_color >> 8) & 0xff) / 255.0;
+	curtain_params.b = ((bg_color >> 0) & 0xff) / 255.0;
+	curtain_params.a = 1.0;
 
-	solid_surface.get_label = kiosk_shell_background_surface_get_label;
-	solid_surface.surface_committed = NULL;
-	solid_surface.surface_private = NULL;
+	curtain_params.x = output->x;
+	curtain_params.y = output->y;
+	curtain_params.width = output->width;
+	curtain_params.height = output->height;
 
-	shoutput->background_view =
-			create_solid_color_surface(shoutput->shell->compositor,
-						   &solid_surface,
-						   output->x, output->y,
-						   output->width,
-						   output->height);
+	curtain_params.capture_input = true;
 
-	weston_surface_set_role(shoutput->background_view->surface,
+	curtain_params.get_label = kiosk_shell_background_surface_get_label;
+	curtain_params.surface_committed = NULL;
+	curtain_params.surface_private = NULL;
+
+	shoutput->curtain = weston_curtain_create(ec, &curtain_params);
+
+	weston_surface_set_role(shoutput->curtain->view->surface,
 				"kiosk-shell-background", NULL, 0);
 
 	weston_layer_entry_insert(&shell->background_layer.view_list,
-				  &shoutput->background_view->layer_link);
+				  &shoutput->curtain->view->layer_link);
 
-	shoutput->background_view->is_mapped = true;
-	shoutput->background_view->surface->is_mapped = true;
-	shoutput->background_view->surface->output = output;
-	weston_view_set_output(shoutput->background_view, output);
+	shoutput->curtain->view->is_mapped = true;
+	shoutput->curtain->view->surface->output = output;
+	weston_view_set_output(shoutput->curtain->view, output);
 }
 
 static void
@@ -530,8 +533,8 @@ kiosk_shell_output_destroy(struct kiosk_shell_output *shoutput)
 	shoutput->output = NULL;
 	shoutput->output_destroy_listener.notify = NULL;
 
-	if (shoutput->background_view)
-		weston_surface_destroy(shoutput->background_view->surface);
+	if (shoutput->curtain)
+		weston_curtain_destroy(shoutput->curtain);
 
 	wl_list_remove(&shoutput->output_destroy_listener.link);
 	wl_list_remove(&shoutput->link);
@@ -795,7 +798,7 @@ desktop_surface_committed(struct weston_desktop_surface *desktop_surface,
 		struct kiosk_shell_seat *kiosk_seat;
 
 		shsurf->view->is_mapped = true;
-		surface->is_mapped = true;
+		weston_surface_map(surface);
 
 		kiosk_seat = get_kiosk_shell_seat(seat);
 		if (seat && kiosk_seat)
@@ -948,6 +951,17 @@ desktop_surface_set_xwayland_position(struct weston_desktop_surface *desktop_sur
 	shsurf->xwayland.is_set = true;
 }
 
+static void
+desktop_surface_get_position(struct weston_desktop_surface *desktop_surface,
+			     int32_t *x, int32_t *y, void *shell)
+{
+	struct kiosk_shell_surface *shsurf =
+		weston_desktop_surface_get_user_data(desktop_surface);
+
+	*x = shsurf->view->geometry.x;
+	*y = shsurf->view->geometry.y;
+}
+
 static const struct weston_desktop_api kiosk_shell_desktop_api = {
 	.struct_size = sizeof(struct weston_desktop_api),
 	.surface_added = desktop_surface_added,
@@ -962,6 +976,7 @@ static const struct weston_desktop_api kiosk_shell_desktop_api = {
 	.ping_timeout = desktop_surface_ping_timeout,
 	.pong = desktop_surface_pong,
 	.set_xwayland_position = desktop_surface_set_xwayland_position,
+	.get_position = desktop_surface_get_position,
 };
 
 /*
@@ -1049,15 +1064,21 @@ kiosk_shell_touch_to_activate_binding(struct weston_touch *touch,
 static void
 kiosk_shell_add_bindings(struct kiosk_shell *shell)
 {
-	weston_compositor_add_button_binding(shell->compositor, BTN_LEFT, 0,
+	uint32_t mod = 0;
+
+	mod = weston_shell_get_binding_modifier(shell->config, MODIFIER_SUPER);
+
+	weston_compositor_add_button_binding(shell->compositor, BTN_LEFT, mod,
 					     kiosk_shell_click_to_activate_binding,
 					     shell);
-	weston_compositor_add_button_binding(shell->compositor, BTN_RIGHT, 0,
+	weston_compositor_add_button_binding(shell->compositor, BTN_RIGHT, mod,
 					     kiosk_shell_click_to_activate_binding,
 					     shell);
-	weston_compositor_add_touch_binding(shell->compositor, 0,
+	weston_compositor_add_touch_binding(shell->compositor, mod,
 					    kiosk_shell_touch_to_activate_binding,
 					    shell);
+
+	weston_install_debug_key_binding(shell->compositor, mod);
 }
 
 static void

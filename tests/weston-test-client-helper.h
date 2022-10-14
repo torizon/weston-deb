@@ -172,6 +172,8 @@ struct buffer {
 };
 
 struct surface {
+	struct client *client; /* not owned */
+
 	struct wl_surface *wl_surface;
 	struct output *output; /* not owned */
 	int x;
@@ -205,6 +207,9 @@ create_test_surface(struct client *client);
 void
 surface_destroy(struct surface *surface);
 
+void
+surface_set_opaque_rect(struct surface *surface, const struct rectangle *rect);
+
 struct client *
 create_client_and_test_surface(int x, int y, int width, int height);
 
@@ -233,9 +238,6 @@ frame_callback_wait_nofail(struct client *client, int *done);
 #define frame_callback_wait(c, d) assert(frame_callback_wait_nofail((c), (d)))
 
 void
-skip(const char *fmt, ...);
-
-void
 expect_protocol_error(struct client *client,
 		      const struct wl_interface *intf, uint32_t code);
 
@@ -247,6 +249,9 @@ screenshot_reference_filename(const char *basename, uint32_t seq);
 
 char *
 image_filename(const char *basename);
+
+FILE *
+fopen_dump_file(const char *suffix);
 
 bool
 check_images_match(pixman_image_t *img_a, pixman_image_t *img_b,

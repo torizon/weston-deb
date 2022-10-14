@@ -42,6 +42,10 @@ struct pixel_format_info {
 	/** The DRM format name without the DRM_FORMAT_ prefix. */
 	const char *drm_format_name;
 
+	/** If true, is only for internal use and should not be advertised to
+	 * clients to allow them to create buffers of this format. */
+	bool hide_from_clients;
+
 	/** If non-zero, number of planes in base (non-modified) format. */
 	int num_planes;
 
@@ -76,9 +80,10 @@ struct pixel_format_info {
 
 	/** If set, this format can be used with the legacy drmModeAddFB()
 	 *  function (not AddFB2), using this and the bpp member. */
-	int depth;
+	int addfb_legacy_depth;
 
-	/** See 'depth' member above. */
+	/** Number of bits required to store a single pixel, for
+	 *  single-planar formats. */
 	int bpp;
 
 	/** Horizontal subsampling; if non-zero, divide the width by this
@@ -186,6 +191,19 @@ const struct pixel_format_info *
 pixel_format_get_info_by_drm_name(const char *drm_format_name);
 
 /**
+ * Get pixel format information for a Pixman format code
+ *
+ * Given a Pixman format code, return a pixel format info structure describing
+ * the properties of that format.
+ *
+ * @param pixman_format Pixman format code to get info for
+ * @returns A pixel format structure (must not be freed), or NULL if the
+ *          format could not be found
+ */
+const struct pixel_format_info *
+pixel_format_get_info_by_pixman(pixman_format_code_t pixman_format);
+
+/**
  * Get number of planes used by a pixel format
  *
  * Given a pixel format info structure, return the number of planes
@@ -246,6 +264,36 @@ pixel_format_get_opaque_substitute(const struct pixel_format_info *format);
  */
 const struct pixel_format_info *
 pixel_format_get_info_by_opaque_substitute(uint32_t format);
+
+/**
+ * Return the horizontal subsampling factor for a given plane
+ *
+ * When horizontal subsampling is effective, a sampler bound to a secondary
+ * plane must bind the sampler with a smaller effective width. This function
+ * returns the subsampling factor to use for the given plane.
+ *
+ * @param format Pixel format info structure
+ * @param plane Zero-indexed plane number
+ * @returns Horizontal subsampling factor for the given plane
+ */
+unsigned int
+pixel_format_hsub(const struct pixel_format_info *format,
+		  unsigned int plane);
+
+/**
+ * Return the vertical subsampling factor for a given plane
+ *
+ * When vertical subsampling is effective, a sampler bound to a secondary
+ * plane must bind the sampler with a smaller effective height. This function
+ * returns the subsampling factor to use for the given plane.
+ *
+ * @param format Pixel format info structure
+ * @param plane Zero-indexed plane number
+ * @returns Vertical subsampling factor for the given plane
+ */
+unsigned int
+pixel_format_vsub(const struct pixel_format_info *format,
+		  unsigned int plane);
 
 /**
  * Return the effective sampling width for a given plane

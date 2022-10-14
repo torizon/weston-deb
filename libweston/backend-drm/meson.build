@@ -24,6 +24,7 @@ srcs_drm = [
 	'fb.c',
 	'modes.c',
 	'kms.c',
+	'kms-color.c',
 	'state-helpers.c',
 	'state-propose.c',
 	linux_dmabuf_unstable_v1_protocol_c,
@@ -32,6 +33,7 @@ srcs_drm = [
 ]
 
 deps_drm = [
+	dep_libm,
 	dep_libdl,
 	dep_libweston_private,
 	dep_session_helper,

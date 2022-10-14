@@ -118,8 +118,9 @@ drm_backend_create_gl_renderer(struct drm_backend *b)
 int
 init_egl(struct drm_backend *b)
 {
-	b->gbm = create_gbm_device(b->drm.fd);
+	struct drm_device *device = b->drm;
 
+	b->gbm = create_gbm_device(device->drm.fd);
 	if (!b->gbm)
 		return -1;
 
@@ -145,6 +146,7 @@ static void drm_output_fini_cursor_egl(struct drm_output *output)
 static int
 drm_output_init_cursor_egl(struct drm_output *output, struct drm_backend *b)
 {
+	struct drm_device *device = output->device;
 	unsigned int i;
 
 	/* No point creating cursors if we don't have a plane for them. */
@@ -154,14 +156,14 @@ drm_output_init_cursor_egl(struct drm_output *output, struct drm_backend *b)
 	for (i = 0; i < ARRAY_LENGTH(output->gbm_cursor_fb); i++) {
 		struct gbm_bo *bo;
 
-		bo = gbm_bo_create(b->gbm, b->cursor_width, b->cursor_height,
+		bo = gbm_bo_create(b->gbm, device->cursor_width, device->cursor_height,
 				   GBM_FORMAT_ARGB8888,
 				   GBM_BO_USE_CURSOR | GBM_BO_USE_WRITE);
 		if (!bo)
 			goto err;
 
 		output->gbm_cursor_fb[i] =
-			drm_fb_get_from_bo(bo, b, false, BUFFER_CURSOR);
+			drm_fb_get_from_bo(bo, device, false, BUFFER_CURSOR);
 		if (!output->gbm_cursor_fb[i]) {
 			gbm_bo_destroy(bo);
 			goto err;
@@ -173,7 +175,7 @@ drm_output_init_cursor_egl(struct drm_output *output, struct drm_backend *b)
 
 err:
 	weston_log("cursor buffers unavailable, using gl cursors\n");
-	b->cursors_are_broken = true;
+	device->cursors_are_broken = true;
 	drm_output_fini_cursor_egl(output);
 	return -1;
 }
@@ -183,6 +185,7 @@ create_gbm_surface(struct gbm_device *gbm, struct drm_output *output)
 {
 	struct weston_mode *mode = output->base.current_mode;
 	struct drm_plane *plane = output->scanout_plane;
+	const struct pixel_format_info *pixel_format;
 	struct weston_drm_format *fmt;
 	const uint64_t *modifiers;
 	unsigned int num_modifiers;
@@ -190,8 +193,15 @@ create_gbm_surface(struct gbm_device *gbm, struct drm_output *output)
 	fmt = weston_drm_format_array_find_format(&plane->formats,
 						  output->gbm_format);
 	if (!fmt) {
-		weston_log("format 0x%x not supported by output %s\n",
-			   output->gbm_format, output->base.name);
+		pixel_format = pixel_format_get_info(output->gbm_format);
+		if (pixel_format)
+			weston_log("format %s not supported by output %s\n",
+				   pixel_format->drm_format_name,
+				   output->base.name);
+		else
+			weston_log("format 0x%x not supported by output %s\n",
+				   output->gbm_format,
+				   output->base.name);
 		return;
 	}
 
@@ -280,7 +290,7 @@ struct drm_fb *
 drm_output_render_gl(struct drm_output_state *state, pixman_region32_t *damage)
 {
 	struct drm_output *output = state->output;
-	struct drm_backend *b = to_drm_backend(output->base.compositor);
+	struct drm_device *device = output->device;
 	struct gbm_bo *bo;
 	struct drm_fb *ret;
 
@@ -295,7 +305,7 @@ drm_output_render_gl(struct drm_output_state *state, pixman_region32_t *damage)
 	}
 
 	/* The renderer always produces an opaque image. */
-	ret = drm_fb_get_from_bo(bo, b, true, BUFFER_GBM_SURFACE);
+	ret = drm_fb_get_from_bo(bo, device, true, BUFFER_GBM_SURFACE);
 	if (!ret) {
 		weston_log("failed to get drm_fb for bo\n");
 		gbm_surface_release_buffer(output->gbm_surface, bo);
@@ -305,68 +315,3 @@ drm_output_render_gl(struct drm_output_state *state, pixman_region32_t *damage)
 
 	return ret;
 }
-
-static void
-switch_to_gl_renderer(struct drm_backend *b)
-{
-	struct drm_output *output;
-	bool dmabuf_support_inited;
-	bool linux_explicit_sync_inited;
-
-	if (!b->use_pixman)
-		return;
-
-	dmabuf_support_inited = !!b->compositor->renderer->import_dmabuf;
-	linux_explicit_sync_inited =
-		b->compositor->capabilities & WESTON_CAP_EXPLICIT_SYNC;
-
-	weston_log("Switching to GL renderer\n");
-
-	b->gbm = create_gbm_device(b->drm.fd);
-	if (!b->gbm) {
-		weston_log("Failed to create gbm device. "
-			   "Aborting renderer switch\n");
-		return;
-	}
-
-	wl_list_for_each(output, &b->compositor->output_list, base.link)
-		pixman_renderer_output_destroy(&output->base);
-
-	b->compositor->renderer->destroy(b->compositor);
-
-	if (drm_backend_create_gl_renderer(b) < 0) {
-		gbm_device_destroy(b->gbm);
-		weston_log("Failed to create GL renderer. Quitting.\n");
-		/* FIXME: we need a function to shutdown cleanly */
-		assert(0);
-	}
-
-	wl_list_for_each(output, &b->compositor->output_list, base.link)
-		drm_output_init_egl(output, b);
-
-	b->use_pixman = 0;
-
-	if (!dmabuf_support_inited && b->compositor->renderer->import_dmabuf) {
-		if (linux_dmabuf_setup(b->compositor) < 0)
-			weston_log("Error: initializing dmabuf "
-				   "support failed.\n");
-	}
-
-	if (!linux_explicit_sync_inited &&
-	    (b->compositor->capabilities & WESTON_CAP_EXPLICIT_SYNC)) {
-		if (linux_explicit_synchronization_setup(b->compositor) < 0)
-			weston_log("Error: initializing explicit "
-				   " synchronization support failed.\n");
-	}
-}
-
-void
-renderer_switch_binding(struct weston_keyboard *keyboard,
-			const struct timespec *time, uint32_t key, void *data)
-{
-	struct drm_backend *b =
-		to_drm_backend(keyboard->seat->compositor);
-
-	switch_to_gl_renderer(b);
-}
-

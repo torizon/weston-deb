@@ -35,7 +35,6 @@ srcs_libweston = [
 	'weston-log-flight-rec.c',
 	'weston-log.c',
 	'weston-direct-display.c',
-	'zoom.c',
 	linux_dmabuf_unstable_v1_protocol_c,
 	linux_dmabuf_unstable_v1_server_protocol_h,
 	linux_explicit_synchronization_unstable_v1_protocol_c,
@@ -52,6 +51,8 @@ srcs_libweston = [
 	relative_pointer_unstable_v1_server_protocol_h,
 	weston_screenshooter_protocol_c,
 	weston_screenshooter_server_protocol_h,
+	single_pixel_buffer_v1_protocol_c,
+	single_pixel_buffer_v1_server_protocol_h,
 	text_cursor_position_protocol_c,
 	text_cursor_position_server_protocol_h,
 	text_input_unstable_v1_protocol_c,
@@ -69,6 +70,8 @@ srcs_libweston = [
 	weston_direct_display_protocol_c,
 	weston_direct_display_server_protocol_h,
 ]
+
+subdir('desktop')
 
 if get_option('renderer-gl')
 	dep_egl = dependency('egl', required: false)
@@ -131,6 +134,20 @@ pkgconfig.generate(
 	subdirs: dir_include_libweston
 )
 
+if version_weston.version_compare('>= 11.0.90')
+	error('Remove libweston-desktop.pc for Weston 12.x')
+endif
+
+pkgconfig.generate(
+	lib_weston,
+	filebase: 'libweston-desktop-@0@'.format(libweston_major),
+	name: 'libweston-desktop',
+	version: version_weston,
+	description: 'Desktop shell abstraction library for libweston compositors',
+	requires_private: deps_for_libweston_users,
+	subdirs: dir_include_libweston
+)
+
 pkgconfig.generate(
 	filebase: 'libweston-@0@-protocols'.format(libweston_major),
 	name: 'libWeston Protocols',
@@ -144,9 +161,7 @@ pkgconfig.generate(
 )
 
 srcs_session_helper = [
-	'launcher-direct.c',
 	'launcher-util.c',
-	'launcher-weston-launch.c',
 ]
 deps_session_helper = [ dep_libweston_private_h ]
 
@@ -157,13 +172,8 @@ endif
 systemd_dep = dependency('', required: false)
 if get_option('launcher-logind')
 	systemd_dep = dependency('libsystemd', version: '>= 209', required: false)
-	if systemd_dep.found()
-		config_h.set('HAVE_SYSTEMD_LOGIN_209', '1')
-	else
-		systemd_dep = dependency('libsystemd-login', version: '>= 198', required: false)
-		if not systemd_dep.found()
-			error('logind support requires libsystemd or libsystemd-login but neither was found. Or, you can use \'-Dlauncher-logind=false\'')
-		endif
+	if not systemd_dep.found()
+		error('logind support requires libsystemd >= 209. Or, you can use \'-Dlauncher-logind=false\'')
 	endif
 
 	dbus_dep = dependency('dbus-1', version: '>= 1.6', required: false)
@@ -228,29 +238,9 @@ dep_vertex_clipping = declare_dependency(
 	include_directories: include_directories('.')
 )
 
-if get_option('deprecated-weston-launch')
-	warning('weston-launch is deprecated and will be removed in a future release. Please migrate to libseat and seatd-launch.')
-	dep_pam = cc.find_library('pam')
-
-	if not cc.has_function('pam_open_session', dependencies: dep_pam)
-		error('pam_open_session not found for weston-launch')
-	endif
-
-	executable(
-		'weston-launch',
-		'weston-launch.c',
-		dependencies: [dep_pam, systemd_dep, dep_libdrm],
-		include_directories: common_inc,
-		install: true
-	)
-
-	meson.add_install_script('echo', 'REMINDER: You are installing weston-launch, please make it setuid-root.')
-endif
-
 subdir('color-lcms')
 subdir('renderer-gl')
 subdir('backend-drm')
-subdir('backend-fbdev')
 subdir('backend-headless')
 subdir('backend-rdp')
 subdir('backend-wayland')

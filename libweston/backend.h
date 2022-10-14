@@ -32,6 +32,8 @@
 #ifndef LIBWESTON_BACKEND_INTERNAL_H
 #define LIBWESTON_BACKEND_INTERNAL_H
 
+struct weston_hdr_metadata_type1;
+
 struct weston_backend {
 	void (*destroy)(struct weston_compositor *compositor);
 
@@ -46,27 +48,21 @@ struct weston_backend {
 	 * Returns an opaque pointer, which the backend may use as private
 	 * data referring to the repaint cycle.
 	 */
-	void * (*repaint_begin)(struct weston_compositor *compositor);
+	void (*repaint_begin)(struct weston_compositor *compositor);
 
 	/** Cancel a repaint sequence
 	 *
 	 * Cancels a repaint sequence, when an error has occurred during
 	 * one output's repaint; see repaint_begin.
-	 *
-	 * @param repaint_data Data returned by repaint_begin
 	 */
-	void (*repaint_cancel)(struct weston_compositor *compositor,
-			       void *repaint_data);
+	void (*repaint_cancel)(struct weston_compositor *compositor);
 
 	/** Conclude a repaint sequence
 	 *
 	 * Called on successful completion of a repaint sequence; see
 	 * repaint_begin.
-	 *
-	 * @param repaint_data Data returned by repaint_begin
 	 */
-	int (*repaint_flush)(struct weston_compositor *compositor,
-			     void *repaint_data);
+	int (*repaint_flush)(struct weston_compositor *compositor);
 
 	/** Allocate a new output
 	 *
@@ -142,6 +138,10 @@ weston_head_set_subpixel(struct weston_head *head,
 void
 weston_head_set_transform(struct weston_head *head, uint32_t transform);
 
+void
+weston_head_set_supported_eotf_mask(struct weston_head *head,
+				    uint32_t eotf_mask);
+
 /* weston_output */
 
 void
@@ -153,9 +153,6 @@ weston_output_damage(struct weston_output *output);
 
 void
 weston_output_release(struct weston_output *output);
-
-void
-weston_output_init_zoom(struct weston_output *output);
 
 void
 weston_output_finish_frame(struct weston_output *output,
@@ -177,6 +174,9 @@ weston_output_transform_coordinate(struct weston_output *output,
 void
 weston_output_region_from_global(struct weston_output *output,
 				 pixman_region32_t *region);
+
+const struct weston_hdr_metadata_type1 *
+weston_output_get_hdr_metadata_type1(const struct weston_output *output);
 
 /* weston_seat */
 

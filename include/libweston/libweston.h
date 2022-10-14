@@ -81,6 +81,7 @@ struct weston_pointer_constraint;
 struct ro_anonymous_file;
 struct weston_color_profile;
 struct weston_color_transform;
+struct pixel_format_info;
 
 enum weston_keyboard_modifier {
 	MODIFIER_CTRL = (1 << 0),
@@ -150,21 +151,6 @@ struct weston_spring {
 	uint32_t clip;
 };
 
-struct weston_output_zoom {
-	bool active;
-	float increment;
-	float level;
-	float max_level;
-	float trans_x, trans_y;
-	struct {
-		double x, y;
-	} current;
-	struct weston_seat *seat;
-	struct weston_animation animation_z;
-	struct weston_spring spring_z;
-	struct wl_listener motion_listener;
-};
-
 /* bit compatible with drm definitions. */
 enum dpms_enum {
 	WESTON_DPMS_ON,
@@ -222,6 +208,154 @@ struct weston_testsuite_data {
 	void *test_private_data;
 };
 
+/** EOTF mode for outputs and heads
+ *
+ * A list of EOTF modes for driving displays, defined by CTA-861-G for
+ * Dynamic Range and Mastering InfoFrame.
+ *
+ * On heads, a bitmask of one or more entries shows which modes are claimed
+ * supported.
+ *
+ * On outputs, the mode to be used for driving the video sink.
+ *
+ * For traditional non-HDR sRGB, use WESTON_EOTF_MODE_SDR.
+ */
+enum weston_eotf_mode {
+	/** Invalid EOTF mode, or none supported. */
+	WESTON_EOTF_MODE_NONE			= 0,
+
+	/** Traditional gamma, SDR luminance range */
+	WESTON_EOTF_MODE_SDR			= 0x01,
+
+	/** Traditional gamma, HDR luminance range */
+	WESTON_EOTF_MODE_TRADITIONAL_HDR	= 0x02,
+
+	/** Preceptual quantizer, SMPTE ST 2084 */
+	WESTON_EOTF_MODE_ST2084			= 0x04,
+
+	/** Hybrid log-gamma, ITU-R BT.2100 */
+	WESTON_EOTF_MODE_HLG			= 0x08,
+};
+
+/** Bitmask of all defined EOTF modes */
+#define WESTON_EOTF_MODE_ALL_MASK \
+	((uint32_t)(WESTON_EOTF_MODE_SDR | WESTON_EOTF_MODE_TRADITIONAL_HDR | \
+		    WESTON_EOTF_MODE_ST2084 | WESTON_EOTF_MODE_HLG))
+
+/** CIE 1931 xy chromaticity coordinates */
+struct weston_CIExy {
+	float x;
+	float y;
+};
+
+enum weston_hdr_metadata_type1_groups {
+	/** weston_hdr_metadata_type1::primary is set */
+	WESTON_HDR_METADATA_TYPE1_GROUP_PRIMARIES	= 0x01,
+
+	/** weston_hdr_metadata_type1::white is set */
+	WESTON_HDR_METADATA_TYPE1_GROUP_WHITE		= 0x02,
+
+	/** weston_hdr_metadata_type1::maxDML is set */
+	WESTON_HDR_METADATA_TYPE1_GROUP_MAXDML		= 0x04,
+
+	/** weston_hdr_metadata_type1::minDML is set */
+	WESTON_HDR_METADATA_TYPE1_GROUP_MINDML		= 0x08,
+
+	/** weston_hdr_metadata_type1::maxCLL is set */
+	WESTON_HDR_METADATA_TYPE1_GROUP_MAXCLL		= 0x10,
+
+	/** weston_hdr_metadata_type1::maxFALL is set */
+	WESTON_HDR_METADATA_TYPE1_GROUP_MAXFALL		= 0x20,
+
+	/** all valid bits */
+	WESTON_HDR_METADATA_TYPE1_GROUP_ALL_MASK	= 0x3f
+};
+
+/** HDR static metadata type 1
+ *
+ * The fields are defined by CTA-861-G except here they use float encoding.
+ *
+ * In Weston used only with HDR display modes.
+ */
+struct weston_hdr_metadata_type1 {
+	/** Which fields are valid
+	 *
+	 * A bitmask of values from enum weston_hdr_metadata_type1_groups.
+	 */
+	uint32_t group_mask;
+
+	/* EOTF is tracked externally with enum weston_eotf_mode */
+
+	/** Chromaticities of the primaries, in any order */
+	struct weston_CIExy primary[3];
+
+	/** White point chromaticity */
+	struct weston_CIExy white;
+
+	/** Maximum display mastering luminance, 1 - 65535 cd/m² */
+	float maxDML;
+
+	/** Minimum display mastering luminance, 0.0001 - 6.5535 cd/m² */
+	float minDML;
+
+	/** Maximum content light level, 1 - 65535 cd/m² */
+	float maxCLL;
+
+	/** Maximum frame-average light level, 1 - 65535 cd/m² */
+	float maxFALL;
+};
+
+enum weston_color_characteristics_groups {
+	/** weston_color_characteristics::primary is set */
+	WESTON_COLOR_CHARACTERISTICS_GROUP_PRIMARIES	= 0x01,
+
+	/** weston_color_characteristics::white is set */
+	WESTON_COLOR_CHARACTERISTICS_GROUP_WHITE	= 0x02,
+
+	/** weston_color_characteristics::max_luminance is set */
+	WESTON_COLOR_CHARACTERISTICS_GROUP_MAXL		= 0x04,
+
+	/** weston_color_characteristics::min_luminance is set */
+	WESTON_COLOR_CHARACTERISTICS_GROUP_MINL		= 0x08,
+
+	/** weston_color_characteristics::maxFALL is set */
+	WESTON_COLOR_CHARACTERISTICS_GROUP_MAXFALL	= 0x10,
+
+	/** all valid bits */
+	WESTON_COLOR_CHARACTERISTICS_GROUP_ALL_MASK	= 0x1f
+};
+
+/** Basic display color characteristics
+ *
+ * This is a simple description of a display or output (monitor) color
+ * characteristics. The parameters can be found in EDID, with caveats. They
+ * are particularly useful with HDR monitors.
+ */
+struct weston_color_characteristics {
+	/** Which fields are valid
+	 *
+	 * A bitmask of values from enum weston_color_characteristics_groups.
+	 */
+	uint32_t group_mask;
+
+	/* EOTF is tracked externally with enum weston_eotf_mode */
+
+	/** Chromaticities of the primaries */
+	struct weston_CIExy primary[3];
+
+	/** White point chromaticity */
+	struct weston_CIExy white;
+
+	/** Display's desired maximum content peak luminance, cd/m² */
+	float max_luminance;
+
+	/** Display's desired minimum content luminance, cd/m² */
+	float min_luminance;
+
+	/** Display's desired maximum frame-average light level, cd/m² */
+	float maxFALL;
+};
+
 /** Represents a head, usually a display connector
  *
  * \rst
@@ -258,9 +392,36 @@ struct weston_head {
 	char *name;			/**< head name, e.g. connector name */
 	bool connected;			/**< is physically connected */
 	bool non_desktop;		/**< non-desktop display, e.g. HMD */
+	uint32_t supported_eotf_mask;	/**< supported weston_eotf_mode bits */
 
 	/** Current content protection status */
 	enum weston_hdcp_protection current_protection;
+
+	/** Opaque pointer used by backends to identify heads as theirs */
+	const void *backend_id;
+};
+
+/** Output properties derived from its color characteristics and profile
+ *
+ * These are constructed by a color manager.
+ *
+ * A weston_output_color_outcome owns (a reference to) everything it contains.
+ *
+ * \ingroup output
+ * \internal
+ */
+struct weston_output_color_outcome {
+	/** sRGB to output color space transformation */
+	struct weston_color_transform *from_sRGB_to_output;
+
+	/** sRGB to blending color space transformation */
+	struct weston_color_transform *from_sRGB_to_blend;
+
+	/** Blending to output color space transformation */
+	struct weston_color_transform *from_blend_to_output;
+
+	/** HDR Static Metadata Type 1 for WESTON_EOTF_MODE_ST2084 */
+	struct weston_hdr_metadata_type1 hdr_meta;
 };
 
 /** Content producer for heads
@@ -324,7 +485,6 @@ struct weston_output {
 	/** For cancelling the idle_repaint callback on output destruction. */
 	struct wl_event_source *idle_repaint_source;
 
-	struct weston_output_zoom zoom;
 	int dirty;
 	struct wl_signal frame_signal;
 	struct wl_signal destroy_signal;	/**< sent when disabled */
@@ -352,11 +512,9 @@ struct weston_output {
 	bool allow_protection;
 
 	int (*start_repaint_loop)(struct weston_output *output);
-	int (*repaint)(struct weston_output *output,
-			pixman_region32_t *damage,
-			void *repaint_data);
+	int (*repaint)(struct weston_output *output, pixman_region32_t *damage);
 	void (*destroy)(struct weston_output *output);
-	void (*assign_planes)(struct weston_output *output, void *repaint_data);
+	void (*assign_planes)(struct weston_output *output);
 	int (*switch_mode)(struct weston_output *output, struct weston_mode *mode);
 
 	/* backlight values are on 0-255 range, where higher is brighter */
@@ -375,10 +533,12 @@ struct weston_output {
 	int scale;
 
 	struct weston_color_profile *color_profile;
-	struct weston_color_transform *from_sRGB_to_output;
-	struct weston_color_transform *from_sRGB_to_blend;
-	struct weston_color_transform *from_blend_to_output;
 	bool from_blend_to_output_by_backend;
+	enum weston_eotf_mode eotf_mode;
+	struct weston_color_characteristics color_characteristics;
+
+	struct weston_output_color_outcome *color_outcome;
+	uint64_t color_outcome_serial;
 
 	int (*enable)(struct weston_output *output);
 	int (*disable)(struct weston_output *output);
@@ -937,39 +1097,6 @@ struct weston_plane {
 
 struct weston_drm_format_array;
 
-struct weston_renderer {
-	int (*read_pixels)(struct weston_output *output,
-			       pixman_format_code_t format, void *pixels,
-			       uint32_t x, uint32_t y,
-			       uint32_t width, uint32_t height);
-	void (*repaint_output)(struct weston_output *output,
-			       pixman_region32_t *output_damage);
-	void (*flush_damage)(struct weston_surface *surface);
-	void (*attach)(struct weston_surface *es, struct weston_buffer *buffer);
-	void (*surface_set_color)(struct weston_surface *surface,
-			       float red, float green,
-			       float blue, float alpha);
-	void (*destroy)(struct weston_compositor *ec);
-
-
-	/** See weston_surface_get_content_size() */
-	void (*surface_get_content_size)(struct weston_surface *surface,
-					 int *width, int *height);
-
-	/** See weston_surface_copy_content() */
-	int (*surface_copy_content)(struct weston_surface *surface,
-				    void *target, size_t size,
-				    int src_x, int src_y,
-				    int width, int height);
-
-	/** See weston_compositor_import_dmabuf() */
-	bool (*import_dmabuf)(struct weston_compositor *ec,
-			      struct linux_dmabuf_buffer *buffer);
-
-	const struct weston_drm_format_array *
-			(*get_supported_formats)(struct weston_compositor *ec);
-};
-
 enum weston_capability {
 	/* backend/renderer supports arbitrary rotation */
 	WESTON_CAP_ROTATION_ANY			= 0x0001,
@@ -1126,7 +1253,7 @@ struct weston_compositor {
 
 	struct weston_color_manager *color_manager;
 	struct weston_renderer *renderer;
-	pixman_format_code_t read_format;
+	const struct pixel_format_info *read_format;
 
 	struct weston_backend *backend;
 	struct weston_launcher *launcher;
@@ -1137,6 +1264,7 @@ struct weston_compositor {
 	struct wl_list plugin_api_list; /* struct weston_plugin_api::link */
 
 	uint32_t output_id_pool;
+	bool output_flow_dirty;
 
 	struct xkb_rule_names xkb_names;
 	struct xkb_context *xkb_context;
@@ -1182,8 +1310,17 @@ struct weston_compositor {
 	struct weston_log_context *weston_log_ctx;
 	struct weston_log_scope *debug_scene;
 	struct weston_log_scope *timeline;
+	struct weston_log_scope *libseat_debug;
 
 	struct content_protection *content_protection;
+
+	/* One-time warning about a view appearing in the layer list when it
+	 * or its surface are not mapped. */
+	bool warned_about_unmapped_surface_or_view;
+};
+
+struct weston_solid_buffer_values {
+	float r, g, b, a;
 };
 
 struct weston_buffer {
@@ -1191,19 +1328,45 @@ struct weston_buffer {
 	struct wl_signal destroy_signal;
 	struct wl_listener destroy_listener;
 
+	enum {
+		WESTON_BUFFER_SHM,
+		WESTON_BUFFER_DMABUF,
+		WESTON_BUFFER_RENDERER_OPAQUE,
+		WESTON_BUFFER_SOLID,
+	} type;
+
 	union {
 		struct wl_shm_buffer *shm_buffer;
+		void *dmabuf;
 		void *legacy_buffer;
+		struct weston_solid_buffer_values solid;
 	};
+
 	int32_t width, height;
 	uint32_t busy_count;
-	int y_inverted;
+	uint32_t passive_count;
+	enum {
+		ORIGIN_TOP_LEFT, /* buffer content starts at (0,0) */
+		ORIGIN_BOTTOM_LEFT, /* buffer content starts at (0, height) */
+	} buffer_origin;
+	bool direct_display;
+
+	void *renderer_private;
 	void *backend_private;
+
+	const struct pixel_format_info *pixel_format;
+	uint64_t format_modifier;
+};
+
+enum weston_buffer_reference_type {
+	BUFFER_REF_NONE,
+	BUFFER_MAY_BE_ACCESSED,
+	BUFFER_WILL_NOT_BE_ACCESSED,
 };
 
 struct weston_buffer_reference {
 	struct weston_buffer *buffer;
-	struct wl_listener destroy_listener;
+	enum weston_buffer_reference_type type;
 };
 
 struct weston_buffer_viewport {
@@ -1376,6 +1539,7 @@ struct weston_surface_state {
 	int newly_attached;
 	struct weston_buffer *buffer;
 	struct wl_listener buffer_destroy_listener;
+
 	int32_t sx;
 	int32_t sy;
 
@@ -1761,6 +1925,21 @@ weston_surface_create(struct weston_compositor *compositor);
 struct weston_view *
 weston_view_create(struct weston_surface *surface);
 
+struct weston_buffer_reference *
+weston_buffer_create_solid_rgba(struct weston_compositor *compositor,
+				float r, float g, float b, float a);
+
+void
+weston_surface_attach_solid(struct weston_surface *surface,
+			    struct weston_buffer_reference *buffer_ref,
+			    int w, int h);
+
+void
+weston_buffer_destroy_solid(struct weston_buffer_reference *buffer_ref);
+
+bool
+weston_surface_has_content(struct weston_surface *surface);
+
 void
 weston_view_destroy(struct weston_view *view);
 
@@ -1802,6 +1981,9 @@ void
 weston_view_unmap(struct weston_view *view);
 
 void
+weston_surface_map(struct weston_surface *surface);
+
+void
 weston_surface_unmap(struct weston_surface *surface);
 
 struct weston_surface *
@@ -1834,7 +2016,8 @@ weston_surface_copy_content(struct weston_surface *surface,
 			    int width, int height);
 
 struct weston_buffer *
-weston_buffer_from_resource(struct wl_resource *resource);
+weston_buffer_from_resource(struct weston_compositor *ec,
+			    struct wl_resource *resource);
 
 void
 weston_compositor_get_time(struct timespec *time);
@@ -1857,7 +2040,6 @@ weston_compositor_add_destroy_listener_once(struct weston_compositor *compositor
 
 enum weston_compositor_backend {
 	WESTON_BACKEND_DRM,
-	WESTON_BACKEND_FBDEV,
 	WESTON_BACKEND_HEADLESS,
 	WESTON_BACKEND_RDP,
 	WESTON_BACKEND_WAYLAND,
@@ -1875,11 +2057,6 @@ weston_compositor_get_user_data(struct weston_compositor *compositor);
 void
 weston_compositor_exit_with_code(struct weston_compositor *compositor,
 				 int exit_code);
-void
-weston_output_update_zoom(struct weston_output *output);
-void
-weston_output_activate_zoom(struct weston_output *output,
-			    struct weston_seat *seat);
 void
 weston_output_add_destroy_listener(struct weston_output *output,
 				   struct wl_listener *listener);
@@ -1959,12 +2136,11 @@ struct weston_view_animation *
 weston_slide_run(struct weston_view *view, float start, float stop,
 		 weston_view_animation_done_func_t done, void *data);
 
-void
-weston_surface_set_color(struct weston_surface *surface,
-			 float red, float green, float blue, float alpha);
+struct weston_surface *
+weston_surface_ref(struct weston_surface *surface);
 
 void
-weston_surface_destroy(struct weston_surface *surface);
+weston_surface_unref(struct weston_surface *surface);
 
 int
 weston_output_mode_switch_to_temporary(struct weston_output *output,
@@ -2067,11 +2243,7 @@ weston_compositor_find_output_by_name(struct weston_compositor *compositor,
 
 struct weston_output *
 weston_compositor_create_output(struct weston_compositor *compositor,
-				const char *name);
-
-struct weston_output *
-weston_compositor_create_output_with_head(struct weston_compositor *compositor,
-					  struct weston_head *head);
+				struct weston_head *head, const char *name);
 
 void
 weston_output_destroy(struct weston_output *output);
@@ -2097,6 +2269,20 @@ weston_output_set_color_profile(struct weston_output *output,
 				struct weston_color_profile *cprof);
 
 void
+weston_output_set_eotf_mode(struct weston_output *output,
+			    enum weston_eotf_mode eotf_mode);
+
+enum weston_eotf_mode
+weston_output_get_eotf_mode(const struct weston_output *output);
+
+void
+weston_output_set_color_characteristics(struct weston_output *output,
+					const struct weston_color_characteristics *cc);
+
+const struct weston_color_characteristics *
+weston_output_get_color_characteristics(struct weston_output *output);
+
+void
 weston_output_init(struct weston_output *output,
 		   struct weston_compositor *compositor,
 		   const char *name);
@@ -2109,6 +2295,9 @@ weston_output_enable(struct weston_output *output);
 
 void
 weston_output_disable(struct weston_output *output);
+
+uint32_t
+weston_output_get_supported_eotf_modes(struct weston_output *output);
 
 void
 weston_compositor_flush_heads_changed(struct weston_compositor *compositor);

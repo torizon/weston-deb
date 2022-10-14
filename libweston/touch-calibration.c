@@ -206,7 +206,7 @@ map_calibrator(struct weston_touch_calibrator *calibrator)
 	calibrator->view->is_mapped = true;
 
 	calibrator->surface->output = calibrator->output;
-	calibrator->surface->is_mapped = true;
+	weston_surface_map(calibrator->surface);
 
 	weston_output_schedule_repaint(calibrator->output);
 
@@ -672,6 +672,16 @@ bind_touch_calibration(struct wl_client *client,
 							device->syspath, name);
 		}
 	}
+}
+
+void
+weston_compositor_destroy_touch_calibrator(struct weston_compositor *ec)
+{
+	/* TODO: handle weston_compositor::touch_calibrator destruction
+	 * see
+	 * https://gitlab.freedesktop.org/wayland/weston/-/merge_requests/819#note_1345191
+	 */
+	weston_layer_fini(&ec->calibrator_layer);
 }
 
 /** Advertise touch_calibration support

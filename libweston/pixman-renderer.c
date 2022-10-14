@@ -36,11 +36,11 @@
 #include "color.h"
 #include "pixel-formats.h"
 #include "shared/helpers.h"
+#include "shared/signal.h"
 
 #include <linux/input.h>
 
 struct pixman_output_state {
-	void *shadow_buffer;
 	pixman_image_t *shadow_image;
 	pixman_image_t *hw_buffer;
 	pixman_region32_t *hw_extra_damage;
@@ -94,9 +94,9 @@ get_renderer(struct weston_compositor *ec)
 
 static int
 pixman_renderer_read_pixels(struct weston_output *output,
-			       pixman_format_code_t format, void *pixels,
-			       uint32_t x, uint32_t y,
-			       uint32_t width, uint32_t height)
+			    const struct pixel_format_info *format, void *pixels,
+			    uint32_t x, uint32_t y,
+			    uint32_t width, uint32_t height)
 {
 	struct pixman_output_state *po = get_output_state(output);
 	pixman_image_t *out_buf;
@@ -106,11 +106,11 @@ pixman_renderer_read_pixels(struct weston_output *output,
 		return -1;
 	}
 
-	out_buf = pixman_image_create_bits(format,
+	out_buf = pixman_image_create_bits(format->pixman_format,
 		width,
 		height,
 		pixels,
-		(PIXMAN_FORMAT_BPP(format) / 8) * width);
+		(PIXMAN_FORMAT_BPP(format->pixman_format) / 8) * width);
 
 	pixman_image_composite32(PIXMAN_OP_SRC,
 				 po->hw_buffer, /* src */
@@ -489,6 +489,19 @@ draw_paint_node(struct weston_paint_node *pnode,
 	if (!ps->image)
 		return;
 
+	/* if we still have a reference, but the underlying buffer is no longer
+	 * available signal that we should unref image_t as well. This happens
+	 * when using close animations, with the reference surviving the
+	 * animation while the underlying buffer went away as the client was
+	 * terminated. This is a particular use-case and should probably be
+	 * refactored to provide some analogue with the GL-renderer (as in, to
+	 * still maintain the buffer and let the compositor dispose of it). */
+	if (ps->buffer_ref.buffer && !ps->buffer_ref.buffer->shm_buffer) {
+		pixman_image_unref(ps->image);
+		ps->image = NULL;
+		return;
+	}
+
 	pixman_region32_init(&repaint);
 	pixman_region32_intersect(&repaint,
 				  &pnode->view->transform.boundingbox, damage);
@@ -568,7 +581,7 @@ pixman_renderer_repaint_output(struct weston_output *output,
 	pixman_region32_t hw_damage;
 
 	assert(output->from_blend_to_output_by_backend ||
-	       output->from_blend_to_output == NULL);
+	       output->color_outcome->from_blend_to_output == NULL);
 
 	if (!po->hw_buffer) {
 		po->hw_extra_damage = NULL;
@@ -598,7 +611,8 @@ pixman_renderer_repaint_output(struct weston_output *output,
 }
 
 static void
-pixman_renderer_flush_damage(struct weston_surface *surface)
+pixman_renderer_flush_damage(struct weston_surface *surface,
+			     struct weston_buffer *buffer)
 {
 	/* No-op for pixman renderer */
 }
@@ -620,13 +634,35 @@ buffer_state_handle_buffer_destroy(struct wl_listener *listener, void *data)
 }
 
 static void
+pixman_renderer_surface_set_color(struct weston_surface *es,
+		 float red, float green, float blue, float alpha)
+{
+	struct pixman_surface_state *ps = get_surface_state(es);
+	pixman_color_t color;
+
+	color.red = red * 0xffff;
+	color.green = green * 0xffff;
+	color.blue = blue * 0xffff;
+	color.alpha = alpha * 0xffff;
+
+	if (ps->image) {
+		pixman_image_unref(ps->image);
+		ps->image = NULL;
+	}
+
+	ps->image = pixman_image_create_solid_fill(&color);
+}
+
+static void
 pixman_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 {
 	struct pixman_surface_state *ps = get_surface_state(es);
 	struct wl_shm_buffer *shm_buffer;
 	const struct pixel_format_info *pixel_info;
 
-	weston_buffer_reference(&ps->buffer_ref, buffer);
+	weston_buffer_reference(&ps->buffer_ref, buffer,
+				buffer ? BUFFER_MAY_BE_ACCESSED :
+					 BUFFER_WILL_NOT_BE_ACCESSED);
 	weston_buffer_release_reference(&ps->buffer_release_ref,
 					es->buffer_release_ref.buffer_release);
 
@@ -643,31 +679,39 @@ pixman_renderer_attach(struct weston_surface *es, struct weston_buffer *buffer)
 	if (!buffer)
 		return;
 
-	shm_buffer = wl_shm_buffer_get(buffer->resource);
-
-	if (! shm_buffer) {
-		weston_log("Pixman renderer supports only SHM buffers\n");
-		weston_buffer_reference(&ps->buffer_ref, NULL);
+	if (buffer->type == WESTON_BUFFER_SOLID) {
+		pixman_renderer_surface_set_color(es,
+						  buffer->solid.r,
+						  buffer->solid.g,
+						  buffer->solid.b,
+						  buffer->solid.a);
+		weston_buffer_reference(&ps->buffer_ref, NULL,
+					BUFFER_WILL_NOT_BE_ACCESSED);
 		weston_buffer_release_reference(&ps->buffer_release_ref, NULL);
 		return;
 	}
+
+	if (buffer->type != WESTON_BUFFER_SHM) {
+		weston_log("Pixman renderer supports only SHM buffers\n");
+		weston_buffer_reference(&ps->buffer_ref, NULL,
+					BUFFER_WILL_NOT_BE_ACCESSED);
+		weston_buffer_release_reference(&ps->buffer_release_ref, NULL);
+		return;
+	}
+
+	shm_buffer = buffer->shm_buffer;
 
 	pixel_info = pixel_format_get_info_shm(wl_shm_buffer_get_format(shm_buffer));
 	if (!pixel_info || !pixman_format_supported_source(pixel_info->pixman_format)) {
 		weston_log("Unsupported SHM buffer format 0x%x\n",
 			wl_shm_buffer_get_format(shm_buffer));
-		weston_buffer_reference(&ps->buffer_ref, NULL);
+		weston_buffer_reference(&ps->buffer_ref, NULL,
+					BUFFER_WILL_NOT_BE_ACCESSED);
 		weston_buffer_release_reference(&ps->buffer_release_ref, NULL);
 		weston_buffer_send_server_error(buffer,
 			"disconnecting due to unhandled buffer type");
 		return;
 	}
-
-	es->is_opaque = pixel_format_is_opaque(pixel_info);
-
-	buffer->shm_buffer = shm_buffer;
-	buffer->width = wl_shm_buffer_get_width(shm_buffer);
-	buffer->height = wl_shm_buffer_get_height(shm_buffer);
 
 	ps->image = pixman_image_create_bits(pixel_info->pixman_format,
 		buffer->width, buffer->height,
@@ -696,7 +740,8 @@ pixman_renderer_surface_state_destroy(struct pixman_surface_state *ps)
 		pixman_image_unref(ps->image);
 		ps->image = NULL;
 	}
-	weston_buffer_reference(&ps->buffer_ref, NULL);
+	weston_buffer_reference(&ps->buffer_ref, NULL,
+				BUFFER_WILL_NOT_BE_ACCESSED);
 	weston_buffer_release_reference(&ps->buffer_release_ref, NULL);
 	free(ps);
 }
@@ -751,26 +796,6 @@ pixman_renderer_create_surface(struct weston_surface *surface)
 }
 
 static void
-pixman_renderer_surface_set_color(struct weston_surface *es,
-		 float red, float green, float blue, float alpha)
-{
-	struct pixman_surface_state *ps = get_surface_state(es);
-	pixman_color_t color;
-
-	color.red = red * 0xffff;
-	color.green = green * 0xffff;
-	color.blue = blue * 0xffff;
-	color.alpha = alpha * 0xffff;
-
-	if (ps->image) {
-		pixman_image_unref(ps->image);
-		ps->image = NULL;
-	}
-
-	ps->image = pixman_image_create_solid_fill(&color);
-}
-
-static void
 pixman_renderer_destroy(struct weston_compositor *ec)
 {
 	struct pixman_renderer *pr = get_renderer(ec);
@@ -780,21 +805,6 @@ pixman_renderer_destroy(struct weston_compositor *ec)
 	free(pr);
 
 	ec->renderer = NULL;
-}
-
-static void
-pixman_renderer_surface_get_content_size(struct weston_surface *surface,
-					 int *width, int *height)
-{
-	struct pixman_surface_state *ps = get_surface_state(surface);
-
-	if (ps->image) {
-		*width = pixman_image_get_width(ps->image);
-		*height = pixman_image_get_height(ps->image);
-	} else {
-		*width = 0;
-		*height = 0;
-	}
 }
 
 static int
@@ -867,10 +877,7 @@ pixman_renderer_init(struct weston_compositor *ec)
 	renderer->base.repaint_output = pixman_renderer_repaint_output;
 	renderer->base.flush_damage = pixman_renderer_flush_damage;
 	renderer->base.attach = pixman_renderer_attach;
-	renderer->base.surface_set_color = pixman_renderer_surface_set_color;
 	renderer->base.destroy = pixman_renderer_destroy;
-	renderer->base.surface_get_content_size =
-		pixman_renderer_surface_get_content_size;
 	renderer->base.surface_copy_content =
 		pixman_renderer_surface_copy_content;
 	ec->renderer = &renderer->base;
@@ -907,13 +914,16 @@ pixman_renderer_output_set_buffer(struct weston_output *output,
 				  pixman_image_t *buffer)
 {
 	struct pixman_output_state *po = get_output_state(output);
+	pixman_format_code_t pixman_format;
 
 	if (po->hw_buffer)
 		pixman_image_unref(po->hw_buffer);
 	po->hw_buffer = buffer;
 
 	if (po->hw_buffer) {
-		output->compositor->read_format = pixman_image_get_format(po->hw_buffer);
+		pixman_format = pixman_image_get_format(po->hw_buffer);
+		output->compositor->read_format =
+			pixel_format_get_info_by_pixman(pixman_format);
 		pixman_image_ref(po->hw_buffer);
 	}
 }
@@ -943,19 +953,11 @@ pixman_renderer_output_create(struct weston_output *output,
 		w = output->current_mode->width;
 		h = output->current_mode->height;
 
-		po->shadow_buffer = malloc(w * h * 4);
-
-		if (!po->shadow_buffer) {
-			free(po);
-			return -1;
-		}
-
 		po->shadow_image =
-			pixman_image_create_bits(PIXMAN_x8r8g8b8, w, h,
-						 po->shadow_buffer, w * 4);
+			pixman_image_create_bits_no_clear(PIXMAN_x8r8g8b8,
+							  w, h, NULL, 0);
 
 		if (!po->shadow_image) {
-			free(po->shadow_buffer);
 			free(po);
 			return -1;
 		}
@@ -977,9 +979,6 @@ pixman_renderer_output_destroy(struct weston_output *output)
 	if (po->hw_buffer)
 		pixman_image_unref(po->hw_buffer);
 
-	free(po->shadow_buffer);
-
-	po->shadow_buffer = NULL;
 	po->shadow_image = NULL;
 	po->hw_buffer = NULL;
 

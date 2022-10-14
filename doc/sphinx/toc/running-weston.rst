@@ -6,7 +6,7 @@ underlying environment where it runs on. Ultimately, the back-end is
 responsible for handling the input and generate an output. Weston, as a
 libweston user, can be run on different back-ends, including nested, by using
 the wayland backend, but also on X11 or on a stand-alone back-end like
-DRM/KMS and now deprecated fbdev.
+DRM/KMS.
 
 In most cases, people should allow Weston to choose the backend automatically
 as it will produce the best results. That happens for instance when running
@@ -28,7 +28,6 @@ Available back-ends:
 * **x11** -- run as a x11 application, nested in a X11 display server instance
 * **rdp** -- run as an RDP server without local input or output
 * **headless** -- run without input or output, useful for test suite
-* **fbdev** -- run stand-alone on fbdev/evdev (deprecated)
 
 The job of gathering all the surfaces (windows) being displayed on an output and
 stitching them together is performed by a *renderer*. By doing so, it is
@@ -91,17 +90,20 @@ You can start Weston from a VT assuming that there's a seat manager supported by
 backend to be used by ``libseat`` can optionally be selected with
 ``$LIBSEAT_BACKEND``.  If ``libseat`` and ``seatd`` are both installed, but
 ``seatd`` is not already running, it can be started with ``sudo -- seatd -g
-video``.  If no seat manager supported by ``libseat`` is available, you can use
-the ``weston-launch`` application that can handle VT switching.
+video``.
 
-Another way of launching Weston is via ssh or a serial terminal.  The simplest
-option here is to use the ``libseat`` launcher with ``seatd``.  The process for
+Launching Weston via ssh or a serial terminal is best with the ``libseat``
+launcher and ``seatd``. Logind will refuse to give access to local seats from
+remote connections directly. The process for
 setting that up is identical to the one described above, where one just need to
 ensure that ``seatd`` is running with the appropriate arguments, after which one
-can just run ``weston``.  Another option, is to rely on logind and start weston
-as systemd user service: :ref:`weston-user-service`. Alternatively and as a last
-resort, one can run Weston as root, specifying the tty to use on the command
-line: If TTY 2 is active, one would run ``weston --tty 2`` as root.
+can just run ``weston``. ``seatd`` will lend out the current VT, and if you want
+to run on a different VT you need to ``chvt`` first. Make sure nothing will try
+to take over the seat or VT via logind at the same time in case logind is
+running.
+
+If you want to rely on logind, you can start weston as a systemd user service:
+:ref:`weston-user-service`.
 
 Running Weston on a different seat on a stand-alone back-end
 ------------------------------------------------------------
@@ -171,7 +173,14 @@ Then, weston can be run by selecting the DRM-backend and the seat ``seat-insecur
 
 ::
 
-        ./weston -Bdrm-backend.so --seat=seat-insecure
+        SEATD_VTBOUND=0 ./weston -Bdrm-backend.so --seat=seat-insecure
+
+This assumes you are using the libseat launcher of Weston with the "builtin"
+backend of libseat. Libseat automatically falls back to the builtin backend if
+``seatd`` is not running and a ``logind`` service is not running or refuses.
+You can also force it with ``LIBSEAT_BACKEND=builtin`` if needed.
+``SEATD_VTBOUND=0`` tells libseat that there is no VT associated with the
+chosen seat.
 
 If everything went well you should see weston be up-and-running on an output
 connected to that DRM device.

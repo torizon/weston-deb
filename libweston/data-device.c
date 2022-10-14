@@ -420,7 +420,7 @@ drag_surface_configure(struct weston_drag *drag,
 	assert((pointer != NULL && touch == NULL) ||
 			(pointer == NULL && touch != NULL));
 
-	if (!weston_surface_is_mapped(es) && es->buffer_ref.buffer) {
+	if (!weston_surface_is_mapped(es) && weston_surface_has_content(es)) {
 		if (pointer && pointer->sprite &&
 			weston_view_is_mapped(pointer->sprite))
 			list = &pointer->sprite->layer_link;
@@ -431,7 +431,7 @@ drag_surface_configure(struct weston_drag *drag,
 		weston_layer_entry_insert(list, &drag->icon->layer_link);
 		weston_view_update_transform(drag->icon);
 		pixman_region32_clear(&es->pending.input);
-		es->is_mapped = true;
+		weston_surface_map(es);
 		drag->icon->is_mapped = true;
 	}
 
@@ -1057,13 +1057,17 @@ data_device_start_drag(struct wl_client *client, struct wl_resource *resource,
 			touch->focus &&
 			touch->focus->surface == origin;
 
-	if (!is_pointer_grab && !is_touch_grab)
-		return;
-
 	/* FIXME: Check that the data source type array isn't empty. */
 
 	if (source_resource)
 		source = wl_resource_get_user_data(source_resource);
+
+	if (!is_pointer_grab && !is_touch_grab) {
+		if (source)
+			wl_data_source_send_cancelled(source->resource);
+		return;
+	}
+
 	if (icon_resource)
 		icon = wl_resource_get_user_data(icon_resource);
 
@@ -1235,7 +1239,7 @@ destroy_data_source(struct wl_resource *resource)
 
 static void
 client_source_accept(struct weston_data_source *source,
-		     uint32_t time, const char *mime_type)
+		     uint32_t serial, const char *mime_type)
 {
 	wl_data_source_send_target(source->resource, mime_type);
 }

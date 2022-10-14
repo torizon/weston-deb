@@ -119,6 +119,7 @@ struct x11_backend {
 		xcb_atom_t		 cardinal;
 		xcb_atom_t		 xkb_names;
 	} atom;
+	xcb_generic_event_t *prev_event;
 };
 
 struct x11_head {
@@ -151,15 +152,25 @@ struct window_delete_data {
 
 struct gl_renderer_interface *gl_renderer;
 
+static void
+x11_head_destroy(struct weston_head *base);
+
 static inline struct x11_head *
 to_x11_head(struct weston_head *base)
 {
+	if (base->backend_id != x11_head_destroy)
+		return NULL;
 	return container_of(base, struct x11_head, base);
 }
+
+static void
+x11_output_destroy(struct weston_output *base);
 
 static inline struct x11_output *
 to_x11_output(struct weston_output *base)
 {
+	if (base->destroy != x11_output_destroy)
+		return NULL;
 	return container_of(base, struct x11_output, base);
 }
 
@@ -417,11 +428,14 @@ x11_output_start_repaint_loop(struct weston_output *output)
 
 static int
 x11_output_repaint_gl(struct weston_output *output_base,
-		      pixman_region32_t *damage,
-		      void *repaint_data)
+		      pixman_region32_t *damage)
 {
 	struct x11_output *output = to_x11_output(output_base);
-	struct weston_compositor *ec = output->base.compositor;
+	struct weston_compositor *ec;
+
+	assert(output);
+
+	ec = output->base.compositor;
 
 	ec->renderer->repaint_output(output_base, damage);
 
@@ -436,14 +450,20 @@ static void
 set_clip_for_output(struct weston_output *output_base, pixman_region32_t *region)
 {
 	struct x11_output *output = to_x11_output(output_base);
-	struct weston_compositor *ec = output->base.compositor;
-	struct x11_backend *b = to_x11_backend(ec);
+	struct weston_compositor *ec;
+	struct x11_backend *b;
 	pixman_region32_t transformed_region;
 	pixman_box32_t *rects;
 	xcb_rectangle_t *output_rects;
 	xcb_void_cookie_t cookie;
 	int nrects, i;
 	xcb_generic_error_t *err;
+
+	if (!output)
+		return;
+
+	ec = output->base.compositor;
+	b = to_x11_backend(ec);
 
 	pixman_region32_init(&transformed_region);
 	pixman_region32_copy(&transformed_region, region);
@@ -486,14 +506,18 @@ set_clip_for_output(struct weston_output *output_base, pixman_region32_t *region
 
 static int
 x11_output_repaint_shm(struct weston_output *output_base,
-		       pixman_region32_t *damage,
-		       void *repaint_data)
+		       pixman_region32_t *damage)
 {
 	struct x11_output *output = to_x11_output(output_base);
-	struct weston_compositor *ec = output->base.compositor;
-	struct x11_backend *b = to_x11_backend(ec);
+	struct weston_compositor *ec;
+	struct x11_backend *b;
 	xcb_void_cookie_t cookie;
 	xcb_generic_error_t *err;
+
+	assert(output);
+
+	ec = output->base.compositor;
+	b = to_x11_backend(ec);
 
 	pixman_renderer_output_set_buffer(output_base, output->hw_surface);
 	ec->renderer->repaint_output(output_base, damage);
@@ -567,13 +591,13 @@ x11_output_set_wm_protocols(struct x11_backend *b,
 }
 
 struct wm_normal_hints {
-    	uint32_t flags;
+	uint32_t flags;
 	uint32_t pad[4];
 	int32_t min_width, min_height;
 	int32_t max_width, max_height;
-    	int32_t width_inc, height_inc;
-    	int32_t min_aspect_x, min_aspect_y;
-    	int32_t max_aspect_x, max_aspect_y;
+	int32_t width_inc, height_inc;
+	int32_t min_aspect_x, min_aspect_y;
+	int32_t max_aspect_x, max_aspect_y;
 	int32_t base_width, base_height;
 	int32_t win_gravity;
 };
@@ -803,12 +827,13 @@ static int
 x11_output_switch_mode(struct weston_output *base, struct weston_mode *mode)
 {
 	struct x11_backend *b;
-	struct x11_output *output;
+	struct x11_output *output = to_x11_output(base);
 	static uint32_t values[2];
 	int ret;
 
+	assert(output);
+
 	b = to_x11_backend(base->compositor);
-	output = to_x11_output(base);
 
 	if (mode->width == output->mode.width &&
 	    mode->height == output->mode.height)
@@ -880,7 +905,11 @@ static int
 x11_output_disable(struct weston_output *base)
 {
 	struct x11_output *output = to_x11_output(base);
-	struct x11_backend *backend = to_x11_backend(base->compositor);
+	struct x11_backend *backend;
+
+	assert(output);
+
+	backend = to_x11_backend(base->compositor);
 
 	if (!output->base.enabled)
 		return 0;
@@ -905,6 +934,8 @@ x11_output_destroy(struct weston_output *base)
 {
 	struct x11_output *output = to_x11_output(base);
 
+	assert(output);
+
 	x11_output_disable(&output->base);
 	weston_output_release(&output->base);
 
@@ -915,7 +946,12 @@ static int
 x11_output_enable(struct weston_output *base)
 {
 	struct x11_output *output = to_x11_output(base);
-	struct x11_backend *b = to_x11_backend(base->compositor);
+	const struct weston_mode *mode = output->base.current_mode;
+	struct x11_backend *b;
+
+	assert(output);
+
+	b = to_x11_backend(base->compositor);
 
 	static const char name[] = "Weston Compositor";
 	static const char class[] = "weston-1\0Weston Compositor";
@@ -954,8 +990,7 @@ x11_output_enable(struct weston_output *base)
 			  output->window,
 			  screen->root,
 			  0, 0,
-			  output->base.current_mode->width,
-			  output->base.current_mode->height,
+			  mode->width, mode->height,
 			  0,
 			  XCB_WINDOW_CLASS_INPUT_OUTPUT,
 			  screen->root_visual,
@@ -1020,8 +1055,7 @@ x11_output_enable(struct weston_output *base)
 			.use_shadow = true,
 		};
 		if (x11_output_init_shm(b, output,
-					output->base.current_mode->width,
-					output->base.current_mode->height) < 0) {
+					mode->width, mode->height) < 0) {
 			weston_log("Failed to initialize SHM for the X11 output\n");
 			goto err;
 		}
@@ -1062,9 +1096,7 @@ x11_output_enable(struct weston_output *base)
 		wl_event_loop_add_timer(loop, finish_frame_handler, output);
 
 	weston_log("x11 output %dx%d, window id %d\n",
-		   output->base.current_mode->width,
-		   output->base.current_mode->height,
-		   output->window);
+		   mode->width, mode->height, output->window);
 
 	return 0;
 
@@ -1079,10 +1111,16 @@ static int
 x11_output_set_size(struct weston_output *base, int width, int height)
 {
 	struct x11_output *output = to_x11_output(base);
-	struct x11_backend *b = to_x11_backend(base->compositor);
+	struct x11_backend *b;
 	struct weston_head *head;
-	xcb_screen_t *scrn = b->screen;
+	xcb_screen_t *scrn;
 	int output_width, output_height;
+
+	if (!output)
+		return -1;
+
+	b = to_x11_backend(base->compositor);
+	scrn = b->screen;
 
 	/* We can only be called once. */
 	assert(!output->base.current_mode);
@@ -1165,6 +1203,9 @@ x11_head_create(struct weston_compositor *compositor, const char *name)
 		return -1;
 
 	weston_head_init(&head->base, name);
+
+	head->base.backend_id = x11_head_destroy;
+
 	weston_head_set_connection_status(&head->base, true);
 	weston_compositor_add_head(compositor, &head->base);
 
@@ -1172,8 +1213,12 @@ x11_head_create(struct weston_compositor *compositor, const char *name)
 }
 
 static void
-x11_head_destroy(struct x11_head *head)
+x11_head_destroy(struct weston_head *base)
 {
+	struct x11_head *head = to_x11_head(base);
+
+	assert(head);
+
 	weston_head_release(&head->base);
 	free(head);
 }
@@ -1450,7 +1495,7 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 {
 	struct x11_backend *b = data;
 	struct x11_output *output;
-	xcb_generic_event_t *event, *prev;
+	xcb_generic_event_t *event;
 	xcb_client_message_event_t *client_message;
 	xcb_enter_notify_event_t *enter_notify;
 	xcb_key_press_event_t *key_press, *key_release;
@@ -1466,16 +1511,15 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 	int count;
 	struct timespec time;
 
-	prev = NULL;
 	count = 0;
 	while (x11_backend_next_event(b, &event, mask)) {
 		response_type = event->response_type & ~0x80;
 
-		switch (prev ? prev->response_type & ~0x80 : 0x80) {
+		switch (b->prev_event ? b->prev_event->response_type & ~0x80 : 0x80) {
 		case XCB_KEY_RELEASE:
 			/* Suppress key repeat events; this is only used if we
 			 * don't have XCB XKB support. */
-			key_release = (xcb_key_press_event_t *) prev;
+			key_release = (xcb_key_press_event_t *) b->prev_event;
 			key_press = (xcb_key_press_event_t *) event;
 			if (response_type == XCB_KEY_PRESS &&
 			    key_release->time == key_press->time &&
@@ -1483,8 +1527,8 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 				/* Don't deliver the held key release
 				 * event or the new key press event. */
 				free(event);
-				free(prev);
-				prev = NULL;
+				free(b->prev_event);
+				b->prev_event = NULL;
 				continue;
 			} else {
 				/* Deliver the held key release now
@@ -1497,8 +1541,8 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 					   key_release->detail - 8,
 					   WL_KEYBOARD_KEY_STATE_RELEASED,
 					   STATE_UPDATE_AUTOMATIC);
-				free(prev);
-				prev = NULL;
+				free(b->prev_event);
+				b->prev_event = NULL;
 				break;
 			}
 
@@ -1522,8 +1566,8 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 			notify_keyboard_focus_in(&b->core_seat, &b->keys,
 						 STATE_UPDATE_AUTOMATIC);
 
-			free(prev);
-			prev = NULL;
+			free(b->prev_event);
+			b->prev_event = NULL;
 			break;
 
 		default:
@@ -1548,7 +1592,7 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 			/* If we don't have XKB, we need to use the lame
 			 * autorepeat detection above. */
 			if (!b->has_xkb) {
-				prev = event;
+				b->prev_event = event;
 				break;
 			}
 			key_release = (xcb_key_press_event_t *) event;
@@ -1643,7 +1687,7 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 			if (focus_in->mode == XCB_NOTIFY_MODE_WHILE_GRABBED)
 				break;
 
-			prev = event;
+			b->prev_event = event;
 			break;
 
 		case XCB_FOCUS_OUT:
@@ -1677,13 +1721,13 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 #endif
 
 		count++;
-		if (prev != event)
-			free (event);
+		if (b->prev_event != event)
+			free(event);
 	}
 
-	switch (prev ? prev->response_type & ~0x80 : 0x80) {
+	switch (b->prev_event ? b->prev_event->response_type & ~0x80 : 0x80) {
 	case XCB_KEY_RELEASE:
-		key_release = (xcb_key_press_event_t *) prev;
+		key_release = (xcb_key_press_event_t *) b->prev_event;
 		update_xkb_state_from_core(b, key_release->state);
 		weston_compositor_get_time(&time);
 		notify_key(&b->core_seat,
@@ -1691,8 +1735,8 @@ x11_backend_handle_event(int fd, uint32_t mask, void *data)
 			   key_release->detail - 8,
 			   WL_KEYBOARD_KEY_STATE_RELEASED,
 			   STATE_UPDATE_AUTOMATIC);
-		free(prev);
-		prev = NULL;
+		free(b->prev_event);
+		b->prev_event = NULL;
 		break;
 	default:
 		break;
@@ -1792,8 +1836,10 @@ x11_destroy(struct weston_compositor *ec)
 
 	weston_compositor_shutdown(ec); /* destroys outputs, too */
 
-	wl_list_for_each_safe(base, next, &ec->head_list, compositor_link)
-		x11_head_destroy(to_x11_head(base));
+	wl_list_for_each_safe(base, next, &ec->head_list, compositor_link) {
+		if (to_x11_head(base))
+			x11_head_destroy(base);
+	}
 
 	XCloseDisplay(backend->dpy);
 	free(backend);

@@ -75,7 +75,8 @@ if [[ -n "$KERNEL_DEFCONFIG" ]]; then
 		--enable CONFIG_DRM \
 		--enable CONFIG_DRM_KMS_HELPER \
 		--enable CONFIG_DRM_KMS_FB_HELPER \
-		--enable CONFIG_DRM_VKMS
+		--enable CONFIG_DRM_VKMS \
+		--enable CONFIG_DRM_VGEM
 	make ARCH=${LINUX_ARCH} oldconfig
 	make ARCH=${LINUX_ARCH}
 
@@ -94,7 +95,7 @@ fi
 
 # Build and install Wayland; keep this version in sync with our dependency
 # in meson.build.
-git clone --branch 1.18.0 --depth=1 https://gitlab.freedesktop.org/wayland/wayland
+git clone --branch 1.20.0 --depth=1 https://gitlab.freedesktop.org/wayland/wayland
 cd wayland
 git show -s HEAD
 mkdir build
@@ -106,7 +107,7 @@ rm -rf wayland
 # Keep this version in sync with our dependency in meson.build. If you wish to
 # raise a MR against custom protocol, please change this reference to clone
 # your relevant tree, and make sure you bump $FDO_DISTRIBUTION_TAG.
-git clone --branch 1.24 --depth=1 https://gitlab.freedesktop.org/wayland/wayland-protocols
+git clone --branch 1.26 --depth=1 https://gitlab.freedesktop.org/wayland/wayland-protocols
 cd wayland-protocols
 git show -s HEAD
 meson build
@@ -129,6 +130,17 @@ ninja ${NINJAFLAGS} -C build install
 cd ..
 rm -rf mesa
 
+# Build and install our own version of libdrm. Debian 11 (bullseye) provides
+# libdrm 2.4.104 which doesn't have the IN_FORMATS iterator api. We can stop
+# building and installing libdrm as soon as we move to Debian 12.
+git clone --branch libdrm-2.4.108 --depth=1 https://gitlab.freedesktop.org/mesa/drm.git
+cd drm
+meson build -Dauto_features=disabled \
+	-Dvc4=false -Dfreedreno=false -Detnaviv=false
+ninja ${NINJAFLAGS} -C build install
+cd ..
+rm -rf drm
+
 # PipeWire is used for remoting support. Unlike our other dependencies its
 # behaviour will be stable, however as a pre-1.0 project its API is not yet
 # stable, so again we lock it to a fixed version.
@@ -142,9 +154,8 @@ ninja ${NINJAFLAGS} -C build install
 cd ..
 rm -rf pipewire-src
 
-# seatd lets us avoid the pain of handling VTs manually through weston-launch
-# or open-coding TTY assignment within Weston. We use this for our tests using
-# the DRM backend.
+# seatd lets us avoid the pain of open-coding TTY assignment within Weston.
+# We use this for our tests using the DRM backend.
 git clone --depth=1 --branch 0.6.1 https://git.sr.ht/~kennylevinsen/seatd
 cd seatd
 meson build -Dauto_features=disabled \

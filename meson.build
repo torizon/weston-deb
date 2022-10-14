@@ -1,16 +1,16 @@
 project('weston',
 	'c',
-	version: '10.0.1',
+	version: '11.0.0',
 	default_options: [
 		'warning_level=3',
 		'c_std=gnu99',
 		'b_lundef=true',
 	],
-	meson_version: '>= 0.52.1',
+	meson_version: '>= 0.54.0',
 	license: 'MIT/Expat',
 )
 
-libweston_major = 10
+libweston_major = 11
 
 # libweston_revision is manufactured to follow the autotools build's
 # library file naming, thanks to libtool
@@ -25,6 +25,10 @@ elif libweston_major == version_weston_arr[0].to_int()
 	libweston_revision = version_weston_arr[2].to_int()
 else
 	error('Bad versions in meson.build: libweston_major is too low')
+endif
+
+if not (get_option('launcher-logind') or get_option('launcher-libseat'))
+       error('At least one launcher must be enabled')
 endif
 
 dir_prefix = get_option('prefix')
@@ -117,8 +121,6 @@ config_h.set_quoted('LIBEXECDIR', dir_libexec)
 config_h.set_quoted('MODULEDIR', dir_module_weston)
 config_h.set_quoted('LIBWESTON_MODULEDIR', dir_module_libweston)
 
-config_h.set10('TEST_GL_RENDERER', get_option('test-gl-renderer'))
-
 backend_default = get_option('backend-default')
 if backend_default == 'auto'
 	foreach b : [ 'headless', 'x11', 'wayland', 'drm' ]
@@ -139,28 +141,18 @@ if dep_xkbcommon.version().version_compare('>= 0.5.0')
 	config_h.set('HAVE_XKBCOMMON_COMPOSE', '1')
 endif
 
-if get_option('deprecated-wl-shell')
-	warning('Support for the deprecated wl_shell interface is enabled.')
-	warning('This feature will be removed in a future version.')
-	config_h.set('HAVE_DEPRECATED_WL_SHELL', '1')
-endif
-
-dep_wayland_server = dependency('wayland-server', version: '>= 1.18.0')
-dep_wayland_client = dependency('wayland-client', version: '>= 1.18.0')
+dep_wayland_server = dependency('wayland-server', version: '>= 1.20.0')
+dep_wayland_client = dependency('wayland-client', version: '>= 1.20.0')
 dep_pixman = dependency('pixman-1', version: '>= 0.25.2')
 dep_libinput = dependency('libinput', version: '>= 0.8.0')
 dep_libevdev = dependency('libevdev')
 dep_libm = cc.find_library('m')
 dep_libdl = cc.find_library('dl')
-dep_libdrm = dependency('libdrm', version: '>= 2.4.95')
+dep_libdrm = dependency('libdrm', version: '>= 2.4.108')
 dep_libdrm_headers = dep_libdrm.partial_dependency(compile_args: true)
 dep_threads = dependency('threads')
 
-dep_libdrm_version = dep_libdrm.version()
-if dep_libdrm_version.version_compare('>=2.4.107')
-  message('Found libdrm with human format modifier support.')
-  config_h.set('HAVE_HUMAN_FORMAT_MODIFIER', '1')
-endif
+dep_lcms2 = dependency('lcms2', version: '>= 2.9', required: false)
 
 prog_python = import('python').find_installation('python3')
 files_xxd_py = files('tools/xxd.py')
@@ -170,8 +162,8 @@ subdir('include')
 subdir('protocol')
 subdir('shared')
 subdir('libweston')
-subdir('libweston-desktop')
 subdir('xwayland')
+subdir('shell-utils')
 subdir('compositor')
 subdir('desktop-shell')
 subdir('fullscreen-shell')

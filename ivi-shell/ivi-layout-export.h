@@ -43,9 +43,6 @@
  * way in In-Vehicle Infotainment system, which integrate several domains
  * in one system. A layer is allocated to a domain in order to control
  * application surfaces grouped to the layer all together.
- *
- * This API and ABI follow following specifications.
- * https://at.projects.genivi.org/wiki/display/PROJ/Wayland+IVI+Extension+Design
  */
 
 #ifndef _IVI_LAYOUT_EXPORT_H_
@@ -67,7 +64,6 @@ extern "C" {
 #define IVI_INVALID_ID UINT_MAX
 
 struct ivi_layout_layer;
-struct ivi_layout_screen;
 struct ivi_layout_surface;
 
 struct ivi_layout_surface_properties

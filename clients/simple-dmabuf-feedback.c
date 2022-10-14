@@ -41,6 +41,7 @@
 #include <libweston/pixel-formats.h>
 #include "xdg-shell-client-protocol.h"
 #include "linux-dmabuf-unstable-v1-client-protocol.h"
+#include "presentation-time-client-protocol.h"
 
 #include <xf86drm.h>
 #include <gbm.h>
@@ -48,6 +49,11 @@
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>
+
+#define L_LINE "│   "
+#define L_VAL  "├───"
+#define L_LAST "└───"
+#define L_GAP  "    "
 
 #define NUM_BUFFERS 4
 
@@ -135,6 +141,7 @@ struct display {
 	struct output output;
 	struct xdg_wm_base *wm_base;
 	struct zwp_linux_dmabuf_v1 *dmabuf;
+	struct wp_presentation *presentation;
 	struct gbm_device *gbm_device;
 	struct egl egl;
 };
@@ -166,12 +173,14 @@ struct window {
 	struct xdg_surface *xdg_surface;
 	struct xdg_toplevel *xdg_toplevel;
 	struct wl_callback *callback;
+	struct wp_presentation_feedback *presentation_feedback;
 	bool wait_for_configure;
-	uint32_t n_redraws;
+	bool presented_zero_copy;
 	struct zwp_linux_dmabuf_feedback_v1 *dmabuf_feedback_obj;
 	struct dmabuf_feedback dmabuf_feedback, pending_dmabuf_feedback;
 	int card_fd;
 	struct drm_format format;
+	uint32_t bo_flags;
 	struct buffer buffers[NUM_BUFFERS];
 };
 
@@ -453,7 +462,7 @@ buffer_free(struct buffer *buf)
 static void
 create_dmabuf_buffer(struct window *window, struct buffer *buf, uint32_t width,
 		     uint32_t height, uint32_t format, unsigned int count_modifiers,
-		     uint64_t *modifiers);
+		     uint64_t *modifiers, uint32_t bo_flags);
 
 static void
 buffer_recreate(struct buffer *buf)
@@ -466,7 +475,7 @@ buffer_recreate(struct buffer *buf)
 	create_dmabuf_buffer(window, buf, width, height,
 			     window->format.format,
 			     window->format.modifiers.size / sizeof(uint64_t),
-			     window->format.modifiers.data);
+			     window->format.modifiers.data, window->bo_flags);
 	buf->recreate = false;
 }
 
@@ -516,7 +525,7 @@ static const struct zwp_linux_buffer_params_v1_listener params_listener = {
 static void
 create_dmabuf_buffer(struct window *window, struct buffer *buf, uint32_t width,
 		     uint32_t height, uint32_t format, unsigned int count_modifiers,
-		     uint64_t *modifiers)
+		     uint64_t *modifiers, uint32_t bo_flags)
 {
 	struct display *display = window->display;
 	static uint32_t flags = 0;
@@ -531,10 +540,18 @@ create_dmabuf_buffer(struct window *window, struct buffer *buf, uint32_t width,
 
 #ifdef HAVE_GBM_MODIFIERS
 	if (count_modifiers > 0) {
+#ifdef HAVE_GBM_BO_CREATE_WITH_MODIFIERS2
+		buf->bo = gbm_bo_create_with_modifiers2(display->gbm_device,
+							buf->width, buf->height,
+							format, modifiers,
+							count_modifiers,
+							bo_flags);
+#else
 		buf->bo = gbm_bo_create_with_modifiers(display->gbm_device,
 						       buf->width, buf->height,
 						       format, modifiers,
 						       count_modifiers);
+#endif
 		if (buf->bo)
 			buf->modifier = gbm_bo_get_modifier(buf->bo);
 	}
@@ -543,7 +560,7 @@ create_dmabuf_buffer(struct window *window, struct buffer *buf, uint32_t width,
 	if (!buf->bo) {
 		buf->bo = gbm_bo_create(display->gbm_device, buf->width,
 					buf->height, buf->format,
-					GBM_BO_USE_RENDERING);
+					bo_flags);
 		buf->modifier = DRM_FORMAT_MOD_INVALID;
 	}
 
@@ -639,6 +656,7 @@ render(struct buffer *buffer)
 }
 
 static const struct wl_callback_listener frame_listener;
+static const struct wp_presentation_feedback_listener presentation_feedback_listener;
 
 static void
 redraw(void *data, struct wl_callback *callback, uint32_t time)
@@ -660,6 +678,18 @@ redraw(void *data, struct wl_callback *callback, uint32_t time)
 
 	window->callback = wl_surface_frame(window->surface);
 	wl_callback_add_listener(window->callback, &frame_listener, window);
+
+	if (window->presentation_feedback)
+		wp_presentation_feedback_destroy(window->presentation_feedback);
+	if (window->display->presentation) {
+		window->presentation_feedback =
+			wp_presentation_feedback(window->display->presentation,
+						 window->surface);
+		wp_presentation_feedback_add_listener(window->presentation_feedback,
+						      &presentation_feedback_listener,
+						      window);
+	}
+
 	wl_surface_commit(window->surface);
 	buf->status = IN_USE;
 
@@ -672,6 +702,48 @@ redraw(void *data, struct wl_callback *callback, uint32_t time)
 
 static const struct wl_callback_listener frame_listener = {
 	redraw
+};
+
+static void presentation_feedback_handle_sync_output(void *data,
+						     struct wp_presentation_feedback *feedback,
+						     struct wl_output *output)
+{
+}
+
+static void presentation_feedback_handle_presented(void *data,
+						   struct wp_presentation_feedback *feedback,
+						   uint32_t tv_sec_hi,
+						   uint32_t tv_sec_lo,
+						   uint32_t tv_nsec,
+						   uint32_t refresh,
+						   uint32_t seq_hi,
+						   uint32_t seq_lo,
+						   uint32_t flags)
+{
+	struct window *window = data;
+	bool zero_copy = flags & WP_PRESENTATION_FEEDBACK_KIND_ZERO_COPY;
+
+	if (zero_copy && !window->presented_zero_copy) {
+		fprintf(stderr, "Presenting in zero-copy mode\n");
+	}
+	if (!zero_copy && window->presented_zero_copy) {
+		fprintf(stderr, "Stopped presenting in zero-copy mode\n");
+	}
+
+	window->presented_zero_copy = zero_copy;
+	wp_presentation_feedback_destroy(feedback);
+}
+
+static void presentation_feedback_handle_discarded(void *data,
+						   struct wp_presentation_feedback *feedback)
+{
+	wp_presentation_feedback_destroy(feedback);
+}
+
+static const struct wp_presentation_feedback_listener presentation_feedback_listener = {
+	.sync_output = presentation_feedback_handle_sync_output,
+	.presented = presentation_feedback_handle_presented,
+	.discarded = presentation_feedback_handle_discarded,
 };
 
 static void
@@ -810,6 +882,8 @@ destroy_window(struct window *window)
 
 	if (window->callback)
 		wl_callback_destroy(window->callback);
+	if (window->presentation_feedback)
+		wp_presentation_feedback_destroy(window->presentation_feedback);
 
 	for (i = 0; i < NUM_BUFFERS; i++)
 		if (window->buffers[i].buffer)
@@ -873,7 +947,7 @@ create_window(struct display *display)
 		create_dmabuf_buffer(window, &window->buffers[i], width, height,
 				     window->format.format,
 				     window->format.modifiers.size / sizeof(uint64_t),
-				     window->format.modifiers.data);
+				     window->format.modifiers.data, window->bo_flags);
 
 
 	window->xdg_surface = xdg_wm_base_get_xdg_surface(display->wm_base,
@@ -1000,8 +1074,7 @@ dmabuf_feedback_main_device(void *data,
 	drm_node = get_drm_node(feedback->main_device, false);
 	assert(drm_node && "error: failed to retrieve drm node");
 
-	fprintf(stderr, "compositor sent main_device event for dma-buf feedback - %s\n",
-		drm_node);
+	fprintf(stderr, "feedback: main device %s\n", drm_node);
 
 	if (!window->card_fd) {
 		window->card_fd = open(drm_node, O_RDWR | O_CLOEXEC);
@@ -1110,12 +1183,12 @@ print_tranche_format_modifier(uint32_t format, uint64_t modifier)
 		char fourcc_str[5];
 
 		fourcc2str(format, fourcc_str, sizeof(fourcc_str));
-		len = asprintf(&format_str, "0x%08x (%s)", format, fourcc_str);
+		len = asprintf(&format_str, "%s (0x%08x)", fourcc_str, format);
 	}
 	assert(len > 0);
 
-	fprintf(stderr, "│	├────────tranche format/modifier pair - format %s, modifier %s\n",
-			format_str, mod_name);
+	fprintf(stderr, L_LINE L_VAL " format %s, modifier %s\n",
+		format_str, mod_name);
 
 	free(format_str);
 	free(mod_name);
@@ -1131,14 +1204,14 @@ print_dmabuf_feedback_tranche(struct dmabuf_feedback_tranche *tranche)
 	drm_node = get_drm_node(tranche->target_device, tranche->is_scanout_tranche);
 	assert(drm_node && "error: could not retrieve drm node");
 
-	fprintf(stderr, "├──────target_device for tranche - %s\n", drm_node);
-	fprintf(stderr, "│	└scanout tranche? %s\n", tranche->is_scanout_tranche ? "yes" : "no");
+	fprintf(stderr, L_VAL " tranche: target device %s, %s\n",
+		drm_node, tranche->is_scanout_tranche ? "scanout" : "no flags");
 
 	wl_array_for_each(fmt, &tranche->formats.arr)
 		wl_array_for_each(mod, &fmt->modifiers)
 			print_tranche_format_modifier(fmt->format, *mod);
 
-	fprintf(stderr, "│	└end of tranche\n");
+	fprintf(stderr, L_LINE L_LAST " end of tranche\n");
 }
 
 static void
@@ -1173,6 +1246,8 @@ pick_initial_format_from_renderer_tranche(struct window *window,
 		window->format.format = fmt->format;
 		wl_array_copy(&window->format.modifiers, &fmt->modifiers);
 
+		window->bo_flags = GBM_BO_USE_RENDERING;
+
 		return true;
 	}
 	return false;
@@ -1203,6 +1278,8 @@ pick_format_from_scanout_tranche(struct window *window,
 		window->format.format = fmt->format;
 		wl_array_copy(&window->format.modifiers, &fmt->modifiers);
 
+		window->bo_flags = GBM_BO_USE_RENDERING | GBM_BO_USE_SCANOUT;
+
 		return true;
 	}
 	return false;
@@ -1216,7 +1293,7 @@ dmabuf_feedback_done(void *data, struct zwp_linux_dmabuf_feedback_v1 *dmabuf_fee
 	bool got_scanout_tranche = false;
 	unsigned int i;
 
-	fprintf(stderr, "└end of dma-buf feedback\n\n");
+	fprintf(stderr, L_LAST " end of dma-buf feedback\n\n");
 
 	/* The first time that we receive dma-buf feedback for a surface it
 	 * contains only the renderer tranches. We pick the INITIAL_BUFFER_FORMAT
@@ -1344,6 +1421,10 @@ registry_handle_global(void *data, struct wl_registry *registry,
 		d->dmabuf = wl_registry_bind(registry, id,
 					     &zwp_linux_dmabuf_v1_interface,
 					     MIN(version, 4));
+	} else if (strcmp(interface, "wp_presentation") == 0) {
+		d->presentation = wl_registry_bind(registry, id,
+					           &wp_presentation_interface,
+						   1);
 	}
 }
 
@@ -1367,6 +1448,9 @@ destroy_display(struct display *display)
 		eglDestroyContext(display->egl.display, display->egl.context);
 	if (display->egl.display != EGL_NO_DISPLAY)
 		eglTerminate(display->egl.display);
+
+	if (display->presentation)
+		wp_presentation_destroy(display->presentation);
 
 	zwp_linux_dmabuf_v1_destroy(display->dmabuf);
 	xdg_wm_base_destroy(display->wm_base);

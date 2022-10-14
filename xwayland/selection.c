@@ -152,7 +152,7 @@ struct x11_data_source {
 
 static void
 data_source_accept(struct weston_data_source *source,
-		   uint32_t time, const char *mime_type)
+		   uint32_t serial, const char *mime_type)
 {
 }
 
@@ -513,7 +513,6 @@ weston_wm_send_data(struct weston_wm *wm, xcb_atom_t target, const char *mime_ty
 
 	source = seat->selection_data_source;
 	source->send(source, mime_type, p[1]);
-	close(p[1]);
 }
 
 static void

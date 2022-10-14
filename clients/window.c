@@ -42,25 +42,6 @@
 #include <sys/timerfd.h>
 #include <stdbool.h>
 
-#ifdef HAVE_CAIRO_EGL
-#include <wayland-egl.h>
-
-#ifdef USE_CAIRO_GLESV2
-#include <GLES2/gl2.h>
-#include <GLES2/gl2ext.h>
-#else
-#include <GL/gl.h>
-#endif
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
-
-#include <cairo-gl.h>
-#elif !defined(ENABLE_EGL) /* platform.h defines these if EGL is enabled */
-typedef void *EGLDisplay;
-typedef void *EGLConfig;
-typedef void *EGLContext;
-#define EGL_NO_DISPLAY ((EGLDisplay)0)
-#endif /* no HAVE_CAIRO_EGL */
 
 #include <xkbcommon/xkbcommon.h>
 #ifdef HAVE_XKBCOMMON_COMPOSE
@@ -109,10 +90,6 @@ struct display {
 	struct xdg_wm_base *xdg_shell;
 	struct zwp_relative_pointer_manager_v1 *relative_pointer_manager;
 	struct zwp_pointer_constraints_v1 *pointer_constraints;
-	EGLDisplay dpy;
-	EGLConfig argb_config;
-	EGLContext argb_ctx;
-	cairo_device_t *argb_device;
 	uint32_t serial;
 
 	int display_fd;
@@ -179,18 +156,6 @@ struct toysurface {
 		     struct rectangle *server_allocation);
 
 	/*
-	 * Make the toysurface current with the given EGL context.
-	 * Returns 0 on success, and negative on failure.
-	 */
-	int (*acquire)(struct toysurface *base, EGLContext ctx);
-
-	/*
-	 * Release the toysurface from the EGL context, returning control
-	 * to Cairo.
-	 */
-	void (*release)(struct toysurface *base);
-
-	/*
 	 * Destroy the toysurface, including the Cairo surface, any
 	 * backing storage, and the Wayland protocol objects.
 	 */
@@ -240,6 +205,7 @@ struct window {
 	int redraw_needed;
 	int redraw_task_scheduled;
 	struct task redraw_task;
+	struct task close_task;
 	int resize_needed;
 	int custom;
 	int focused;
@@ -352,8 +318,11 @@ struct input {
 	struct toytimer cursor_timer;
 	bool cursor_timer_running;
 	struct wl_surface *pointer_surface;
+	bool pointer_surface_has_role;
+	int hotspot_x, hotspot_y;
 	uint32_t modifiers;
 	uint32_t pointer_enter_serial;
+	uint32_t cursor_serial;
 	float sx, sy;
 	struct wl_list link;
 
@@ -541,167 +510,6 @@ buffer_to_surface_size (enum wl_output_transform buffer_transform, int32_t buffe
 	*width /= buffer_scale;
 	*height /= buffer_scale;
 }
-
-#ifdef HAVE_CAIRO_EGL
-
-struct egl_window_surface {
-	struct toysurface base;
-	cairo_surface_t *cairo_surface;
-	struct display *display;
-	struct wl_surface *surface;
-	struct wl_egl_window *egl_window;
-	EGLSurface egl_surface;
-};
-
-static struct egl_window_surface *
-to_egl_window_surface(struct toysurface *base)
-{
-	return container_of(base, struct egl_window_surface, base);
-}
-
-static cairo_surface_t *
-egl_window_surface_prepare(struct toysurface *base, int dx, int dy,
-			   int32_t width, int32_t height, uint32_t flags,
-			   enum wl_output_transform buffer_transform, int32_t buffer_scale)
-{
-	struct egl_window_surface *surface = to_egl_window_surface(base);
-
-	surface_to_buffer_size (buffer_transform, buffer_scale, &width, &height);
-
-	wl_egl_window_resize(surface->egl_window, width, height, dx, dy);
-	cairo_gl_surface_set_size(surface->cairo_surface, width, height);
-
-	return cairo_surface_reference(surface->cairo_surface);
-}
-
-static void
-egl_window_surface_swap(struct toysurface *base,
-			enum wl_output_transform buffer_transform, int32_t buffer_scale,
-			struct rectangle *server_allocation)
-{
-	struct egl_window_surface *surface = to_egl_window_surface(base);
-
-	cairo_gl_surface_swapbuffers(surface->cairo_surface);
-	wl_egl_window_get_attached_size(surface->egl_window,
-					&server_allocation->width,
-					&server_allocation->height);
-
-	buffer_to_surface_size (buffer_transform, buffer_scale,
-				&server_allocation->width,
-				&server_allocation->height);
-}
-
-static int
-egl_window_surface_acquire(struct toysurface *base, EGLContext ctx)
-{
-	struct egl_window_surface *surface = to_egl_window_surface(base);
-	cairo_device_t *device;
-
-	device = cairo_surface_get_device(surface->cairo_surface);
-	if (!device)
-		return -1;
-
-	if (!ctx) {
-		if (device == surface->display->argb_device)
-			ctx = surface->display->argb_ctx;
-		else
-			assert(0);
-	}
-
-	cairo_device_flush(device);
-	cairo_device_acquire(device);
-	if (!eglMakeCurrent(surface->display->dpy, surface->egl_surface,
-			    surface->egl_surface, ctx))
-		fprintf(stderr, "failed to make surface current\n");
-
-	return 0;
-}
-
-static void
-egl_window_surface_release(struct toysurface *base)
-{
-	struct egl_window_surface *surface = to_egl_window_surface(base);
-	cairo_device_t *device;
-
-	device = cairo_surface_get_device(surface->cairo_surface);
-	if (!device)
-		return;
-
-	if (!eglMakeCurrent(surface->display->dpy,
-			    EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT))
-		fprintf(stderr, "failed to make context current\n");
-
-	cairo_device_release(device);
-}
-
-static void
-egl_window_surface_destroy(struct toysurface *base)
-{
-	struct egl_window_surface *surface = to_egl_window_surface(base);
-	struct display *d = surface->display;
-
-	cairo_surface_destroy(surface->cairo_surface);
-	weston_platform_destroy_egl_surface(d->dpy, surface->egl_surface);
-	wl_egl_window_destroy(surface->egl_window);
-	surface->surface = NULL;
-
-	free(surface);
-}
-
-static struct toysurface *
-egl_window_surface_create(struct display *display,
-			  struct wl_surface *wl_surface,
-			  uint32_t flags,
-			  struct rectangle *rectangle)
-{
-	struct egl_window_surface *surface;
-
-	if (display->dpy == EGL_NO_DISPLAY)
-		return NULL;
-
-	surface = zalloc(sizeof *surface);
-	if (!surface)
-		return NULL;
-
-	surface->base.prepare = egl_window_surface_prepare;
-	surface->base.swap = egl_window_surface_swap;
-	surface->base.acquire = egl_window_surface_acquire;
-	surface->base.release = egl_window_surface_release;
-	surface->base.destroy = egl_window_surface_destroy;
-
-	surface->display = display;
-	surface->surface = wl_surface;
-
-	surface->egl_window = wl_egl_window_create(surface->surface,
-						   rectangle->width,
-						   rectangle->height);
-
-	surface->egl_surface =
-		weston_platform_create_egl_surface(display->dpy,
-						   display->argb_config,
-						   surface->egl_window, NULL);
-
-	surface->cairo_surface =
-		cairo_gl_surface_create_for_egl(display->argb_device,
-						surface->egl_surface,
-						rectangle->width,
-						rectangle->height);
-
-	return &surface->base;
-}
-
-#else
-
-static struct toysurface *
-egl_window_surface_create(struct display *display,
-			  struct wl_surface *wl_surface,
-			  uint32_t flags,
-			  struct rectangle *rectangle)
-{
-	return NULL;
-}
-
-#endif
 
 struct shm_surface_data {
 	struct wl_buffer *buffer;
@@ -1156,17 +964,6 @@ shm_surface_swap(struct toysurface *base,
 	surface->current = NULL;
 }
 
-static int
-shm_surface_acquire(struct toysurface *base, EGLContext ctx)
-{
-	return -1;
-}
-
-static void
-shm_surface_release(struct toysurface *base)
-{
-}
-
 static void
 shm_surface_destroy(struct toysurface *base)
 {
@@ -1189,8 +986,6 @@ shm_surface_create(struct display *display, struct wl_surface *wl_surface,
 	surface = xzalloc(sizeof *surface);
 	surface->base.prepare = shm_surface_prepare;
 	surface->base.swap = shm_surface_swap;
-	surface->base.acquire = shm_surface_acquire;
-	surface->base.release = shm_surface_release;
 	surface->base.destroy = shm_surface_destroy;
 
 	surface->display = display;
@@ -1429,13 +1224,23 @@ window_has_focus(struct window *window)
 	return window->focused;
 }
 
+
+static void
+close_task_run(struct task *task, uint32_t events)
+{
+	struct window *window = container_of(task, struct window, close_task);
+	window->close_handler(window->user_data);
+}
+
 static void
 window_close(struct window *window)
 {
-	if (window->close_handler)
-		window->close_handler(window->user_data);
-	else
+	if (window->close_handler && !window->close_task.run) {
+		window->close_task.run = close_task_run;
+		display_defer(window->display, &window->close_task);
+	} else {
 		display_exit(window->display);
+	}
 }
 
 struct display *
@@ -1449,15 +1254,6 @@ surface_create_surface(struct surface *surface, uint32_t flags)
 {
 	struct display *display = surface->window->display;
 	struct rectangle allocation = surface->allocation;
-
-	if (!surface->toysurface && display->dpy &&
-	    surface->buffer_type == WINDOW_BUFFER_TYPE_EGL_WINDOW) {
-		surface->toysurface =
-			egl_window_surface_create(display,
-						  surface->surface,
-						  flags,
-						  &allocation);
-	}
 
 	if (!surface->toysurface)
 		surface->toysurface = shm_surface_create(display,
@@ -2748,12 +2544,6 @@ input_remove_pointer_focus(struct input *input)
 	input->pointer_focus = NULL;
 	input->current_cursor = CURSOR_UNSET;
 	cancel_pointer_image_update(input);
-	wl_surface_destroy(input->pointer_surface);
-	input->pointer_surface = NULL;
-	if (input->cursor_frame_cb) {
-		wl_callback_destroy(input->cursor_frame_cb);
-		input->cursor_frame_cb = NULL;
-	}
 }
 
 static void
@@ -2781,6 +2571,16 @@ pointer_handle_enter(void *data, struct wl_pointer *pointer,
 	input->display->serial = serial;
 	input->pointer_enter_serial = serial;
 	input->pointer_focus = window;
+
+	/* Some compositors advertise wl_seat before wl_compositor. This
+	 * makes it potentially impossible to create the pointer surface
+	 * when we bind the seat, so we need to create our pointer surface
+	 * now instead.
+	 */
+	if (!input->pointer_surface)
+		input->pointer_surface = wl_compositor_create_surface(input->display->compositor);
+
+	input->pointer_surface_has_role = false;
 
 	input->sx = sx;
 	input->sy = sy;
@@ -3793,8 +3593,7 @@ input_set_pointer_image_index(struct input *input, int index)
 	struct wl_buffer *buffer;
 	struct wl_cursor *cursor;
 	struct wl_cursor_image *image;
-	struct wl_surface *prev_surface;
-	struct display *d = input->display;
+	int dx = 0, dy = 0;
 
 	if (!input->pointer)
 		return;
@@ -3813,21 +3612,24 @@ input_set_pointer_image_index(struct input *input, int index)
 	if (!buffer)
 		return;
 
-	/* Don't re-use the previous surface, otherwise the new buffer and the
-	 * new hotspot aren't applied atomically. */
-	prev_surface = input->pointer_surface;
-	input->pointer_surface = wl_compositor_create_surface(d->compositor);
-
-	wl_surface_attach(input->pointer_surface, buffer, 0, 0);
+	if (input->pointer_surface_has_role) {
+		dx = input->hotspot_x - image->hotspot_x;
+		dy = input->hotspot_y - image->hotspot_y;
+	}
+	wl_surface_attach(input->pointer_surface, buffer, dx, dy);
 	wl_surface_damage(input->pointer_surface, 0, 0,
 			  image->width, image->height);
 	wl_surface_commit(input->pointer_surface);
-	wl_pointer_set_cursor(input->pointer, input->pointer_enter_serial,
-			      input->pointer_surface,
-			      image->hotspot_x, image->hotspot_y);
 
-	if (prev_surface)
-		wl_surface_destroy(prev_surface);
+	if (!input->pointer_surface_has_role) {
+		wl_pointer_set_cursor(input->pointer,
+				      input->pointer_enter_serial,
+				      input->pointer_surface,
+				      image->hotspot_x, image->hotspot_y);
+		input->pointer_surface_has_role = true;
+	}
+	input->hotspot_x = image->hotspot_x;
+	input->hotspot_y = image->hotspot_y;
 }
 
 static const struct wl_callback_listener pointer_surface_listener;
@@ -3839,11 +3641,14 @@ input_set_pointer_special(struct input *input)
 		wl_pointer_set_cursor(input->pointer,
 				      input->pointer_enter_serial,
 				      NULL, 0, 0);
+		input->pointer_surface_has_role = false;
 		return true;
 	}
 
-	if (input->current_cursor == CURSOR_UNSET)
+	if (input->current_cursor == CURSOR_UNSET) {
+		input->pointer_surface_has_role = false;
 		return true;
+	}
 
 	return false;
 }
@@ -3883,7 +3688,6 @@ schedule_pointer_image_update(struct input *input,
 	wl_callback_add_listener(input->cursor_frame_cb,
 				 &pointer_surface_listener, input);
 
-	wl_surface_commit(input->pointer_surface);
 }
 
 static void
@@ -3933,11 +3737,11 @@ pointer_surface_frame_callback(void *data, struct wl_callback *callback,
 					time - input->cursor_anim_start,
 					&duration);
 
-	input_set_pointer_image_index(input, i);
-
 	if (cursor->image_count > 1)
 		schedule_pointer_image_update(input, cursor, duration,
 					      force_frame);
+
+	input_set_pointer_image_index(input, i);
 }
 
 static void
@@ -3967,15 +3771,30 @@ static const struct wl_callback_listener pointer_surface_listener = {
 void
 input_set_pointer_image(struct input *input, int pointer)
 {
+	int force = 0;
+
 	if (!input->pointer)
 		return;
 
-	if (pointer == input->current_cursor)
+	if (input->pointer_enter_serial > input->cursor_serial)
+		force = 1;
+
+	if (!force && pointer == input->current_cursor)
 		return;
 
 	input->current_cursor = pointer;
+	input->cursor_serial = input->pointer_enter_serial;
 	if (!input->cursor_frame_cb)
 		pointer_surface_frame_callback(input, NULL, 0);
+	else if (force && !input_set_pointer_special(input)) {
+		/* The current frame callback may be stuck if, for instance,
+		 * the set cursor request was processed by the server after
+		 * this client lost the focus. In this case the cursor surface
+		 * might not be mapped and the frame callback wouldn't ever
+		 * complete. Send a set_cursor and attach to try to map the
+		 * cursor surface again so that the callback will finish */
+		input_set_pointer_image_index(input, 0);
+	}
 }
 
 struct wl_data_device *
@@ -4413,9 +4232,24 @@ xdg_toplevel_handle_close(void *data, struct xdg_toplevel *xdg_surface)
 	window_close(window);
 }
 
+static void
+xdg_toplevel_handle_configure_bounds(void *data, struct xdg_toplevel *xdg_toplevel,
+				     int32_t width, int32_t height)
+{
+}
+
+
+static void
+xdg_toplevel_handle_wm_capabilities(void *data, struct xdg_toplevel *xdg_toplevel,
+				    struct wl_array *caps)
+{
+}
+
 static const struct xdg_toplevel_listener xdg_toplevel_listener = {
 	xdg_toplevel_handle_configure,
 	xdg_toplevel_handle_close,
+	xdg_toplevel_handle_configure_bounds,
+	xdg_toplevel_handle_wm_capabilities,
 };
 
 static void
@@ -5246,11 +5080,6 @@ surface_create(struct window *window)
 static enum window_buffer_type
 get_preferred_buffer_type(struct display *display)
 {
-#ifdef HAVE_CAIRO_EGL
-	if (display->argb_device && !getenv("TOYTOOLKIT_NO_EGL"))
-		return WINDOW_BUFFER_TYPE_EGL_WINDOW;
-#endif
-
 	return WINDOW_BUFFER_TYPE_SHM;
 }
 
@@ -5293,14 +5122,14 @@ window_create(struct display *display)
 		window->xdg_surface =
 			xdg_wm_base_get_xdg_surface(window->display->xdg_shell,
 						    window->main_surface->surface);
-		fail_on_null(window->xdg_surface, 0, __FILE__, __LINE__);
+		abort_oom_if_null(window->xdg_surface);
 
 		xdg_surface_add_listener(window->xdg_surface,
 					 &xdg_surface_listener, window);
 
 		window->xdg_toplevel =
 			xdg_surface_get_toplevel(window->xdg_surface);
-		fail_on_null(window->xdg_toplevel, 0, __FILE__, __LINE__);
+		abort_oom_if_null(window->xdg_toplevel);
 
 		xdg_toplevel_add_listener(window->xdg_toplevel,
 					  &xdg_toplevel_listener, window);
@@ -5505,7 +5334,7 @@ create_menu(struct display *display,
 	menu->widget = window_add_widget(menu->window, menu);
 	menu->frame = frame_create(window->display->theme, 0, 0,
 	                           FRAME_BUTTON_NONE, NULL, NULL);
-	fail_on_null(menu->frame, 0, __FILE__, __LINE__);
+	abort_oom_if_null(menu->frame);
 	menu->entries = entries;
 	menu->count = count;
 	menu->release_count = 0;
@@ -5539,7 +5368,7 @@ create_simple_positioner(struct display *display,
 	struct xdg_positioner *positioner;
 
 	positioner = xdg_wm_base_create_positioner(display->xdg_shell);
-	fail_on_null(positioner, 0, __FILE__, __LINE__);
+	abort_oom_if_null(positioner);
 	xdg_positioner_set_anchor_rect(positioner, x, y, 1, 1);
 	xdg_positioner_set_size(positioner, w, h);
 	xdg_positioner_set_anchor(positioner,
@@ -5584,7 +5413,7 @@ window_show_menu(struct display *display,
 	window->xdg_surface =
 		xdg_wm_base_get_xdg_surface(display->xdg_shell,
 					    window->main_surface->surface);
-	fail_on_null(window->xdg_surface, 0, __FILE__, __LINE__);
+	abort_oom_if_null(window->xdg_surface);
 
 	xdg_surface_add_listener(window->xdg_surface,
 				 &xdg_surface_listener, window);
@@ -5597,7 +5426,7 @@ window_show_menu(struct display *display,
 	window->xdg_popup = xdg_surface_get_popup(window->xdg_surface,
 						  parent->xdg_surface,
 						  positioner);
-	fail_on_null(window->xdg_popup, 0, __FILE__, __LINE__);
+	abort_oom_if_null(window->xdg_popup);
 	xdg_positioner_destroy(positioner);
 	xdg_popup_grab(window->xdg_popup, input->seat,
 		       display_get_serial(window->display));
@@ -5923,6 +5752,8 @@ display_add_input(struct display *d, uint32_t id, int display_seat_version)
 					    input);
 	}
 
+	input->pointer_surface_has_role = false;
+
 	toytimer_init(&input->cursor_timer, CLOCK_MONOTONIC, d,
 		      cursor_timer_func);
 
@@ -6061,7 +5892,8 @@ registry_handle_global(void *data, struct wl_registry *registry, uint32_t id,
 		display_add_data_device(d, id, version);
 	} else if (strcmp(interface, "xdg_wm_base") == 0) {
 		d->xdg_shell = wl_registry_bind(registry, id,
-						&xdg_wm_base_interface, 1);
+						&xdg_wm_base_interface,
+						MIN(version, 5));
 		xdg_wm_base_add_listener(d->xdg_shell, &wm_base_listener, d);
 	} else if (strcmp(interface, "text_cursor_position") == 0) {
 		d->text_cursor_position =
@@ -6111,90 +5943,6 @@ static const struct wl_registry_listener registry_listener = {
 	registry_handle_global,
 	registry_handle_global_remove
 };
-
-#ifdef HAVE_CAIRO_EGL
-static int
-init_egl(struct display *d)
-{
-	EGLint major, minor;
-	EGLint n;
-
-#ifdef USE_CAIRO_GLESV2
-#  define GL_BIT EGL_OPENGL_ES2_BIT
-#else
-#  define GL_BIT EGL_OPENGL_BIT
-#endif
-
-	static const EGLint argb_cfg_attribs[] = {
-		EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-		EGL_RED_SIZE, 1,
-		EGL_GREEN_SIZE, 1,
-		EGL_BLUE_SIZE, 1,
-		EGL_ALPHA_SIZE, 1,
-		EGL_DEPTH_SIZE, 1,
-		EGL_RENDERABLE_TYPE, GL_BIT,
-		EGL_NONE
-	};
-
-#ifdef USE_CAIRO_GLESV2
-	static const EGLint context_attribs[] = {
-		EGL_CONTEXT_CLIENT_VERSION, 2,
-		EGL_NONE
-	};
-	EGLint api = EGL_OPENGL_ES_API;
-#else
-	EGLint *context_attribs = NULL;
-	EGLint api = EGL_OPENGL_API;
-#endif
-
-	d->dpy =
-		weston_platform_get_egl_display(EGL_PLATFORM_WAYLAND_KHR,
-						d->display, NULL);
-
-	if (!eglInitialize(d->dpy, &major, &minor)) {
-		fprintf(stderr, "failed to initialize EGL\n");
-		return -1;
-	}
-
-	if (!eglBindAPI(api)) {
-		fprintf(stderr, "failed to bind EGL client API\n");
-		return -1;
-	}
-
-	if (!eglChooseConfig(d->dpy, argb_cfg_attribs,
-			     &d->argb_config, 1, &n) || n != 1) {
-		fprintf(stderr, "failed to choose argb EGL config\n");
-		return -1;
-	}
-
-	d->argb_ctx = eglCreateContext(d->dpy, d->argb_config,
-				       EGL_NO_CONTEXT, context_attribs);
-	if (d->argb_ctx == NULL) {
-		fprintf(stderr, "failed to create EGL context\n");
-		return -1;
-	}
-
-	d->argb_device = cairo_egl_device_create(d->dpy, d->argb_ctx);
-	if (cairo_device_status(d->argb_device) != CAIRO_STATUS_SUCCESS) {
-		fprintf(stderr, "failed to get cairo EGL argb device\n");
-		return -1;
-	}
-
-	return 0;
-}
-
-static void
-fini_egl(struct display *display)
-{
-	cairo_device_destroy(display->argb_device);
-
-	eglMakeCurrent(display->dpy, EGL_NO_SURFACE, EGL_NO_SURFACE,
-		       EGL_NO_CONTEXT);
-
-	eglTerminate(display->dpy);
-	eglReleaseThread();
-}
-#endif
 
 static void
 init_dummy_surface(struct display *display)
@@ -6301,12 +6049,6 @@ display_create(int *argc, char *argv[])
 		return NULL;
 	}
 
-#ifdef HAVE_CAIRO_EGL
-	if (init_egl(d) < 0)
-		fprintf(stderr, "EGL does not seem to work, "
-			"falling back to software rendering and wl_shm.\n");
-#endif
-
 	create_cursors(d);
 
 	d->theme = theme_create();
@@ -6365,10 +6107,7 @@ display_destroy(struct display *display)
 		theme_destroy(display->theme);
 	destroy_cursors(display);
 
-#ifdef HAVE_CAIRO_EGL
-	if (display->argb_device)
-		fini_egl(display);
-#endif
+	cleanup_after_cairo();
 
 	if (display->relative_pointer_manager)
 		zwp_relative_pointer_manager_v1_destroy(display->relative_pointer_manager);
@@ -6434,12 +6173,6 @@ display_has_subcompositor(struct display *display)
 	return display->subcompositor != NULL;
 }
 
-cairo_device_t *
-display_get_cairo_device(struct display *display)
-{
-	return display->argb_device;
-}
-
 struct output *
 display_get_output(struct display *display)
 {
@@ -6461,12 +6194,6 @@ display_get_serial(struct display *display)
 	return display->serial;
 }
 
-EGLDisplay
-display_get_egl_display(struct display *d)
-{
-	return d->dpy;
-}
-
 struct wl_data_source *
 display_create_data_source(struct display *display)
 {
@@ -6474,38 +6201,6 @@ display_create_data_source(struct display *display)
 		return wl_data_device_manager_create_data_source(display->data_device_manager);
 	else
 		return NULL;
-}
-
-EGLConfig
-display_get_argb_egl_config(struct display *d)
-{
-	return d->argb_config;
-}
-
-int
-display_acquire_window_surface(struct display *display,
-			       struct window *window,
-			       EGLContext ctx)
-{
-	struct surface *surface = window->main_surface;
-
-	if (surface->buffer_type != WINDOW_BUFFER_TYPE_EGL_WINDOW)
-		return -1;
-
-	widget_get_cairo_surface(window->main_surface->widget);
-	return surface->toysurface->acquire(surface->toysurface, ctx);
-}
-
-void
-display_release_window_surface(struct display *display,
-			       struct window *window)
-{
-	struct surface *surface = window->main_surface;
-
-	if (surface->buffer_type != WINDOW_BUFFER_TYPE_EGL_WINDOW)
-		return;
-
-	surface->toysurface->release(surface->toysurface);
 }
 
 void

@@ -27,9 +27,11 @@
 #include "config.h"
 
 #include <math.h>
+#include <stdio.h>
 
 #include "weston-test-client-helper.h"
 #include "weston-test-fixture-compositor.h"
+#include "image-iter.h"
 #include "color_util.h"
 
 struct setup_args {
@@ -80,19 +82,6 @@ fixture_setup(struct weston_test_harness *harness, const struct setup_args *arg)
 }
 DECLARE_FIXTURE_SETUP_WITH_ARG(fixture_setup, my_setup_args, meta);
 
-static void
-set_opaque_rect(struct client *client,
-		struct surface *surface,
-		const struct rectangle *rect)
-{
-	struct wl_region *region;
-
-	region = wl_compositor_create_region(client->wl_compositor);
-	wl_region_add(region, rect->x, rect->y, rect->width, rect->height);
-	wl_surface_set_opaque_region(surface->wl_surface, region);
-	wl_region_destroy(region);
-}
-
 static uint32_t
 premult_color(uint32_t a, uint32_t r, uint32_t g, uint32_t b)
 {
@@ -107,38 +96,16 @@ premult_color(uint32_t a, uint32_t r, uint32_t g, uint32_t b)
 }
 
 static void
-unpremult_float(struct color_float *cf)
-{
-	if (cf->a == 0.0f) {
-		cf->r = 0.0f;
-		cf->g = 0.0f;
-		cf->b = 0.0f;
-	} else {
-		cf->r /= cf->a;
-		cf->g /= cf->a;
-		cf->b /= cf->a;
-	}
-}
-
-static void
 fill_alpha_pattern(struct buffer *buf)
 {
-	void *pixels;
-	int stride_bytes;
-	int w, h;
+	struct image_header ih = image_header_from(buf->image);
 	int y;
 
-	assert(pixman_image_get_format(buf->image) == PIXMAN_a8r8g8b8);
+	assert(ih.pixman_format == PIXMAN_a8r8g8b8);
+	assert(ih.width == BLOCK_WIDTH * ALPHA_STEPS);
 
-	pixels = pixman_image_get_data(buf->image);
-	stride_bytes = pixman_image_get_stride(buf->image);
-	w = pixman_image_get_width(buf->image);
-	h = pixman_image_get_height(buf->image);
-
-	assert(w == BLOCK_WIDTH * ALPHA_STEPS);
-
-	for (y = 0; y < h; y++) {
-		uint32_t *row = pixels + y * stride_bytes;
+	for (y = 0; y < ih.height; y++) {
+		uint32_t *row = image_header_get_row_u32(&ih, y);
 		uint32_t step;
 
 		for (step = 0; step < (uint32_t)ALPHA_STEPS; step++) {
@@ -153,98 +120,38 @@ fill_alpha_pattern(struct buffer *buf)
 	}
 }
 
-
-static bool
-compare_float(float ref, float dst, int x, const char *chan, float *max_diff)
-{
-#if 0
-	/*
-	 * This file can be loaded in Octave for visualization.
-	 *
-	 * S = load('compare_float_dump.txt');
-	 *
-	 * rvec = S(S(:,1)==114, 2:3);
-	 * gvec = S(S(:,1)==103, 2:3);
-	 * bvec = S(S(:,1)==98, 2:3);
-	 *
-	 * figure
-	 * subplot(3, 1, 1);
-	 * plot(rvec(:,1), rvec(:,2) .* 255, 'r');
-	 * subplot(3, 1, 2);
-	 * plot(gvec(:,1), gvec(:,2) .* 255, 'g');
-	 * subplot(3, 1, 3);
-	 * plot(bvec(:,1), bvec(:,2) .* 255, 'b');
-	 */
-	static FILE *fp = NULL;
-
-	if (!fp)
-		fp = fopen("compare_float_dump.txt", "w");
-	fprintf(fp, "%d %d %f\n", chan[0], x, dst - ref);
-	fflush(fp);
-#endif
-
-	float diff = fabsf(ref - dst);
-
-	if (diff > *max_diff)
-		*max_diff = diff;
-
-	/*
-	 * Allow for +/- 1.5 code points of error in non-linear 8-bit channel
-	 * value. This is necessary for the BLEND_LINEAR case.
-	 *
-	 * With llvmpipe, we could go as low as +/- 0.65 code points of error
-	 * and still pass.
-	 *
-	 * AMD Polaris 11 would be ok with +/- 1.0 code points error threshold
-	 * if not for one particular case of blending (a=254, r=0) into r=255,
-	 * which results in error of 1.29 code points.
-	 */
-	if (diff < 1.5f / 255.f)
-		return true;
-
-	testlog("x=%d %s: ref %f != dst %f, delta %f\n",
-		x, chan, ref, dst, dst - ref);
-
-	return false;
-}
-
 enum blend_space {
 	BLEND_NONLINEAR,
 	BLEND_LINEAR,
 };
 
-static bool
-verify_sRGB_blend_a8r8g8b8(uint32_t bg32, uint32_t fg32, uint32_t dst32,
-			   int x, struct color_float *max_diff,
-			   enum blend_space space)
+static void
+compare_sRGB_blend_a8r8g8b8(uint32_t bg32, uint32_t fg32, uint32_t dst32,
+			    struct rgb_diff_stat *diffstat,
+			    enum blend_space space)
 {
 	struct color_float bg = a8r8g8b8_to_float(bg32);
 	struct color_float fg = a8r8g8b8_to_float(fg32);
 	struct color_float dst = a8r8g8b8_to_float(dst32);
 	struct color_float ref;
-	bool ok = true;
+	int i;
 
-	unpremult_float(&bg);
-	unpremult_float(&fg);
-	unpremult_float(&dst);
+	bg = color_float_unpremult(bg);
+	fg = color_float_unpremult(fg);
+	dst = color_float_unpremult(dst);
 
 	if (space == BLEND_LINEAR) {
 		sRGB_linearize(&bg);
 		sRGB_linearize(&fg);
 	}
 
-	ref.r = (1.0f - fg.a) * bg.r + fg.a * fg.r;
-	ref.g = (1.0f - fg.a) * bg.g + fg.a * fg.g;
-	ref.b = (1.0f - fg.a) * bg.b + fg.a * fg.b;
+	for (i = 0; i < COLOR_CHAN_NUM; i++)
+		ref.rgb[i] = (1.0f - fg.a) * bg.rgb[i] + fg.a * fg.rgb[i];
 
 	if (space == BLEND_LINEAR)
 		sRGB_delinearize(&ref);
 
-	ok = compare_float(ref.r, dst.r, x, "r", &max_diff->r) && ok;
-	ok = compare_float(ref.g, dst.g, x, "g", &max_diff->g) && ok;
-	ok = compare_float(ref.b, dst.b, x, "b", &max_diff->b) && ok;
-
-	return ok;
+	rgb_diff_stat_update(diffstat, &ref, &dst, &fg);
 }
 
 static uint8_t
@@ -280,26 +187,46 @@ pixels_monotonic(const uint32_t *row, int x)
 static void *
 get_middle_row(struct buffer *buf)
 {
-	const int y = (BLOCK_WIDTH - 1) / 2; /* middle row */
-	void *pixels;
-	int stride_bytes;
+	struct image_header ih = image_header_from(buf->image);
 
-	assert(pixman_image_get_width(buf->image) >= BLOCK_WIDTH * ALPHA_STEPS);
-	assert(pixman_image_get_height(buf->image) >= BLOCK_WIDTH);
+	assert(ih.width >= BLOCK_WIDTH * ALPHA_STEPS);
+	assert(ih.height >= BLOCK_WIDTH);
 
-	pixels = pixman_image_get_data(buf->image);
-	stride_bytes = pixman_image_get_stride(buf->image);
-	return pixels + y * stride_bytes;
+	return image_header_get_row_u32(&ih, (BLOCK_WIDTH - 1) / 2);
 }
 
 static bool
 check_blend_pattern(struct buffer *bg, struct buffer *fg, struct buffer *shot,
 		    enum blend_space space)
 {
+	FILE *dump = NULL;
+#if 0
+	/*
+	 * This file can be loaded in Octave for visualization. Find the script
+	 * in tests/visualization/weston_plot_rgb_diff_stat.m and call it with
+	 *
+	 * weston_plot_rgb_diff_stat('alpha_blend-f01-dump.txt', 255, 8)
+	 */
+	dump = fopen_dump_file("dump");
+#endif
+
+	/*
+	 * Allow for +/- 1.5 code points of error in non-linear 8-bit channel
+	 * value. This is necessary for the BLEND_LINEAR case.
+	 *
+	 * With llvmpipe, we could go as low as +/- 0.65 code points of error
+	 * and still pass.
+	 *
+	 * AMD Polaris 11 would be ok with +/- 1.0 code points error threshold
+	 * if not for one particular case of blending (a=254, r=0) into r=255,
+	 * which results in error of 1.29 code points.
+	 */
+	const float tolerance = 1.5f / 255.f;
+
 	uint32_t *bg_row = get_middle_row(bg);
 	uint32_t *fg_row = get_middle_row(fg);
 	uint32_t *shot_row = get_middle_row(shot);
-	struct color_float max_diff = { 0.0f, 0.0f, 0.0f, 0.0f };
+	struct rgb_diff_stat diffstat = { .dump = dump, };
 	bool ret = true;
 	int x;
 
@@ -307,14 +234,17 @@ check_blend_pattern(struct buffer *bg, struct buffer *fg, struct buffer *shot,
 		if (!pixels_monotonic(shot_row, x))
 			ret = false;
 
-		if (!verify_sRGB_blend_a8r8g8b8(bg_row[x], fg_row[x],
-						shot_row[x], x, &max_diff,
-						space))
-			ret = false;
+		compare_sRGB_blend_a8r8g8b8(bg_row[x], fg_row[x], shot_row[x],
+					    &diffstat, space);
 	}
 
-	testlog("%s max diff: r=%f, g=%f, b=%f\n",
-		__func__, max_diff.r, max_diff.g, max_diff.b);
+	if (diffstat.two_norm.max > tolerance)
+		ret = false;
+
+	rgb_diff_stat_print(&diffstat, __func__, 8);
+
+	if (dump)
+		fclose(dump);
 
 	return ret;
 }
@@ -398,8 +328,8 @@ TEST(alpha_blend)
 	client->surface->width = width;
 	client->surface->height = height;
 	client->surface->buffer = bg; /* pass ownership */
-	set_opaque_rect(client, client->surface,
-			&(struct rectangle){ 0, 0, width, height });
+	surface_set_opaque_rect(client->surface,
+				&(struct rectangle){ 0, 0, width, height });
 
 	/* foreground blended content */
 	fg = create_shm_buffer_a8r8g8b8(client, width, height);

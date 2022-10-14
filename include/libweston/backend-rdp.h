@@ -34,6 +34,7 @@ extern "C" {
 #include <libweston/plugin-registry.h>
 
 #define WESTON_RDP_OUTPUT_API_NAME "weston_rdp_output_api_v1"
+#define RDP_DEFAULT_FREQ 60
 
 struct weston_rdp_output_api {
 	/** Initialize a RDP output with specified width and height.
@@ -56,6 +57,11 @@ weston_rdp_output_get_api(struct weston_compositor *compositor)
 
 #define WESTON_RDP_BACKEND_CONFIG_VERSION 2
 
+typedef void *(*rdp_audio_in_setup)(struct weston_compositor *c, void *vcm);
+typedef void (*rdp_audio_in_teardown)(void *audio_private);
+typedef void *(*rdp_audio_out_setup)(struct weston_compositor *c, void *vcm);
+typedef void (*rdp_audio_out_teardown)(void *audio_private);
+
 struct weston_rdp_backend_config {
 	struct weston_backend_config base;
 	char *bind_address;
@@ -66,6 +72,13 @@ struct weston_rdp_backend_config {
 	int env_socket;
 	int no_clients_resize;
 	int force_no_compression;
+	bool remotefx_codec;
+	int external_listener_fd;
+	int refresh_rate;
+	rdp_audio_in_setup audio_in_setup;
+	rdp_audio_in_teardown audio_in_teardown;
+	rdp_audio_out_setup audio_out_setup;
+	rdp_audio_out_teardown audio_out_teardown;
 };
 
 #ifdef  __cplusplus

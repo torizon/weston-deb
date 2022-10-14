@@ -29,6 +29,7 @@
 #include "backend.h"
 #include "libweston-internal.h"
 #include "shared/timespec-util.h"
+#include "shared/string-helpers.h"
 #include <libweston/backend-drm.h>
 #include <libweston/weston-log.h>
 
@@ -66,7 +67,6 @@ struct weston_pipewire {
 
 struct pipewire_output {
 	struct weston_output *output;
-	void (*saved_destroy)(struct weston_output *output);
 	int (*saved_enable)(struct weston_output *output);
 	int (*saved_disable)(struct weston_output *output);
 	int (*saved_start_repaint_loop)(struct weston_output *output);
@@ -315,8 +315,6 @@ pipewire_output_destroy(struct weston_output *base_output)
 		free(mode);
 	}
 
-	output->saved_destroy(base_output);
-
 	pw_stream_destroy(output->stream);
 
 	wl_list_remove(&output->link);
@@ -535,14 +533,12 @@ pipewire_output_create(struct weston_compositor *c, char *name)
 	pw_stream_add_listener(output->stream, &output->stream_listener,
 			       &stream_events, output);
 
-	output->output = api->create_output(c, name);
+	output->output = api->create_output(c, name, pipewire_output_destroy);
 	if (!output->output) {
 		weston_log("Cannot create virtual output\n");
 		goto err;
 	}
 
-	output->saved_destroy = output->output->destroy;
-	output->output->destroy = pipewire_output_destroy;
 	output->saved_enable = output->output->enable;
 	output->output->enable = pipewire_output_enable;
 	output->saved_disable = output->output->disable;
@@ -550,7 +546,7 @@ pipewire_output_create(struct weston_compositor *c, char *name)
 	output->pipewire = pipewire;
 	wl_list_insert(pipewire->output_list.prev, &output->link);
 
-	asprintf(&remoting_name, "%s-%s", connector_name, name);
+	str_printf(&remoting_name, "%s-%s", connector_name, name);
 	weston_head_init(head, remoting_name);
 	weston_head_set_subpixel(head, WL_OUTPUT_SUBPIXEL_NONE);
 	weston_head_set_monitor_strings(head, make, model, serial_number);

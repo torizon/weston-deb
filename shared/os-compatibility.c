@@ -41,9 +41,24 @@
 #define READONLY_SEALS (F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE)
 
 int
+os_fd_clear_cloexec(int fd)
+{
+	int flags;
+
+	flags = fcntl(fd, F_GETFD);
+	if (flags == -1)
+		return -1;
+
+	if (fcntl(fd, F_SETFD, flags & ~(int)FD_CLOEXEC) == -1)
+		return -1;
+
+	return 0;
+}
+
+int
 os_fd_set_cloexec(int fd)
 {
-	long flags;
+	int flags;
 
 	if (fd == -1)
 		return -1;

@@ -297,3 +297,55 @@ out_close:
 	close(fd);
 	return cprof;
 }
+
+/** Get a string naming the EOTF mode
+ *
+ * \internal
+ */
+WL_EXPORT const char *
+weston_eotf_mode_to_str(enum weston_eotf_mode e)
+{
+	switch (e) {
+	case WESTON_EOTF_MODE_NONE:		return "(none)";
+	case WESTON_EOTF_MODE_SDR:		return "SDR";
+	case WESTON_EOTF_MODE_TRADITIONAL_HDR:	return "traditional gamma HDR";
+	case WESTON_EOTF_MODE_ST2084:		return "ST2084";
+	case WESTON_EOTF_MODE_HLG:		return "HLG";
+	}
+	return "???";
+}
+
+/** A list of EOTF modes as a string
+ *
+ * \param eotf_mask Bitwise-or'd enum weston_eotf_mode values.
+ * \return Comma separated names of the listed EOTF modes. Must be free()'d by
+ * the caller.
+ */
+WL_EXPORT char *
+weston_eotf_mask_to_str(uint32_t eotf_mask)
+{
+	FILE *fp;
+	char *str = NULL;
+	size_t size = 0;
+	unsigned i;
+	const char *sep = "";
+
+	fp = open_memstream(&str, &size);
+	if (!fp)
+		return NULL;
+
+	for (i = 0; eotf_mask; i++) {
+		uint32_t bitmask = 1u << i;
+
+		if (eotf_mask & bitmask) {
+			fprintf(fp, "%s%s", sep,
+				weston_eotf_mode_to_str(bitmask));
+			sep = ", ";
+		}
+
+		eotf_mask &= ~bitmask;
+	}
+	fclose(fp);
+
+	return str;
+}

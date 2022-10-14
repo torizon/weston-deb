@@ -43,10 +43,12 @@
 #include <libweston/libweston.h>
 #include "backend.h"
 #include "libweston-internal.h"
+#include "pixel-formats.h"
 #include "weston.h"
 #include "shared/helpers.h"
 #include "shared/os-compatibility.h"
 #include "shared/timespec-util.h"
+#include "shell-utils/shell-utils.h"
 #include "fullscreen-shell-unstable-v1-client-protocol.h"
 
 struct shared_output {
@@ -59,7 +61,7 @@ struct shared_output {
 		struct wl_registry *registry;
 		struct wl_compositor *compositor;
 		struct wl_shm *shm;
-		uint32_t shm_formats;
+		bool shm_formats_has_xrgb;
 		struct zwp_fullscreen_shell_v1 *fshell;
 		struct wl_output *output;
 		struct wl_surface *surface;
@@ -114,9 +116,7 @@ struct ss_shm_buffer {
 
 struct screen_share {
 	struct weston_compositor *compositor;
-	/* XXX: missing compositor destroy listener
-	 * https://gitlab.freedesktop.org/wayland/weston/issues/298
-	 */
+	struct wl_listener compositor_destroy_listener;
 	char *command;
 };
 
@@ -368,7 +368,7 @@ ss_seat_create(struct shared_output *so, uint32_t id)
 	if (seat == NULL)
 		return NULL;
 
-	weston_seat_init(&seat->base, so->output->compositor, "default");
+	weston_seat_init(&seat->base, so->output->compositor, "screen-share");
 	seat->output = so;
 	seat->id = id;
 	seat->parent.seat = wl_registry_bind(so->parent.registry, id,
@@ -702,7 +702,8 @@ shm_handle_format(void *data, struct wl_shm *wl_shm, uint32_t format)
 {
 	struct shared_output *so = data;
 
-	so->parent.shm_formats |= (1 << format);
+	if (format == WL_SHM_FORMAT_XRGB8888)
+		so->parent.shm_formats_has_xrgb = true;
 }
 
 struct wl_shm_listener shm_listener = {
@@ -828,6 +829,9 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 	pixman_box32_t *r;
 	pixman_image_t *damaged_image;
 	pixman_transform_t transform;
+	const struct pixel_format_info *read_format =
+		so->output->compositor->read_format;
+	const pixman_format_code_t pixman_format = read_format->pixman_format;
 
 	width = so->output->current_mode->width;
 	height = so->output->current_mode->height;
@@ -882,13 +886,13 @@ shared_output_repainted(struct wl_listener *listener, void *data)
 			y_orig = y;
 
 		so->output->compositor->renderer->read_pixels(
-			so->output, PIXMAN_a8r8g8b8, so->tmp_data,
-			x, y_orig, width, height);
+			so->output, read_format,
+			so->tmp_data, x, y_orig, width, height);
 
-		damaged_image = pixman_image_create_bits(PIXMAN_a8r8g8b8,
+		damaged_image = pixman_image_create_bits(pixman_format,
 							 width, height,
 							 so->tmp_data,
-				(PIXMAN_FORMAT_BPP(PIXMAN_a8r8g8b8) / 8) * width);
+				(PIXMAN_FORMAT_BPP(pixman_format) / 8) * width);
 		if (!damaged_image)
 			goto err_pixman_init;
 
@@ -968,7 +972,7 @@ shared_output_create(struct weston_output *output, int parent_fd)
 
 	/* Get SHM formats */
 	wl_display_roundtrip(so->parent.display);
-	if (!(so->parent.shm_formats & (1 << WL_SHM_FORMAT_XRGB8888))) {
+	if (!so->parent.shm_formats_has_xrgb) {
 		weston_log("Screen share failed: "
 			   "WL_SHM_FORMAT_XRGB8888 not available\n");
 		goto err_display;
@@ -1144,20 +1148,35 @@ share_output_binding(struct weston_keyboard *keyboard,
 	struct screen_share *ss = data;
 
 	pointer = weston_seat_get_pointer(keyboard->seat);
-	if (!pointer) {
-		weston_log("Cannot pick output: Seat does not have pointer\n");
-		return;
+	if (pointer) {
+		output = weston_output_find(pointer->seat->compositor,
+					    wl_fixed_to_int(pointer->x),
+					    wl_fixed_to_int(pointer->y));
+	} else {
+		output = get_focused_output(keyboard->seat->compositor);
+		if (!output)
+			output = get_default_output(keyboard->seat->compositor);
 	}
 
-	output = weston_output_find(pointer->seat->compositor,
-				    wl_fixed_to_int(pointer->x),
-				    wl_fixed_to_int(pointer->y));
 	if (!output) {
-		weston_log("Cannot pick output: Pointer not on any output\n");
+		weston_log("Cannot pick output: Pointer not on any output, "
+			    "or no focused/default output found\n");
 		return;
 	}
 
 	weston_output_share(output, ss->command);
+}
+
+static void
+compositor_destroy_listener(struct wl_listener *listener, void *data)
+{
+	struct screen_share *ss =
+		wl_container_of(listener, ss, compositor_destroy_listener);
+
+	wl_list_remove(&ss->compositor_destroy_listener.link);
+
+	free(ss->command);
+	free(ss);
 }
 
 WL_EXPORT int
@@ -1175,11 +1194,16 @@ wet_module_init(struct weston_compositor *compositor,
 		return -1;
 	ss->compositor = compositor;
 
+	wl_list_init(&ss->compositor_destroy_listener.link);
+
+	ss->compositor_destroy_listener.notify = compositor_destroy_listener;
+	wl_signal_add(&compositor->destroy_signal, &ss->compositor_destroy_listener);
+
 	config = wet_get_config(compositor);
 
 	section = weston_config_get_section(config, "screen-share", NULL, NULL);
 
-	weston_config_section_get_string(section, "command", &ss->command, "");
+	weston_config_section_get_string(section, "command", &ss->command, NULL);
 
 	weston_compositor_add_key_binding(compositor, KEY_S,
 				          MODIFIER_CTRL | MODIFIER_ALT,

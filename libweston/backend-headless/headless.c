@@ -37,6 +37,7 @@
 #include <libweston/backend-headless.h>
 #include "shared/helpers.h"
 #include "linux-explicit-synchronization.h"
+#include "pixel-formats.h"
 #include "pixman-renderer.h"
 #include "renderer-gl/gl-renderer.h"
 #include "shared/weston-drm-fourcc.h"
@@ -70,24 +71,33 @@ struct headless_output {
 
 	struct weston_mode mode;
 	struct wl_event_source *finish_frame_timer;
-	uint32_t *image_buf;
 	pixman_image_t *image;
 };
 
 static const uint32_t headless_formats[] = {
-	DRM_FORMAT_XRGB8888,
+	DRM_FORMAT_XRGB8888, /* default for pixman-renderer */
 	DRM_FORMAT_ARGB8888,
 };
+
+static void
+headless_head_destroy(struct weston_head *base);
 
 static inline struct headless_head *
 to_headless_head(struct weston_head *base)
 {
+	if (base->backend_id != headless_head_destroy)
+		return NULL;
 	return container_of(base, struct headless_head, base);
 }
+
+static void
+headless_output_destroy(struct weston_output *base);
 
 static inline struct headless_output *
 to_headless_output(struct weston_output *base)
 {
+	if (base->destroy != headless_output_destroy)
+		return NULL;
 	return container_of(base, struct headless_output, base);
 }
 
@@ -122,11 +132,14 @@ finish_frame_handler(void *data)
 
 static int
 headless_output_repaint(struct weston_output *output_base,
-		       pixman_region32_t *damage,
-		       void *repaint_data)
+		       pixman_region32_t *damage)
 {
 	struct headless_output *output = to_headless_output(output_base);
-	struct weston_compositor *ec = output->base.compositor;
+	struct weston_compositor *ec;
+
+	assert(output);
+
+	ec = output->base.compositor;
 
 	ec->renderer->repaint_output(&output->base, damage);
 
@@ -152,17 +165,20 @@ headless_output_disable_pixman(struct headless_output *output)
 {
 	pixman_renderer_output_destroy(&output->base);
 	pixman_image_unref(output->image);
-	free(output->image_buf);
 }
 
 static int
 headless_output_disable(struct weston_output *base)
 {
 	struct headless_output *output = to_headless_output(base);
-	struct headless_backend *b = to_headless_backend(base->compositor);
+	struct headless_backend *b;
+
+	assert(output);
 
 	if (!output->base.enabled)
 		return 0;
+
+	b = to_headless_backend(base->compositor);
 
 	wl_event_source_remove(output->finish_frame_timer);
 
@@ -184,6 +200,8 @@ static void
 headless_output_destroy(struct weston_output *base)
 {
 	struct headless_output *output = to_headless_output(base);
+
+	assert(output);
 
 	headless_output_disable(&output->base);
 	weston_output_release(&output->base);
@@ -214,20 +232,20 @@ headless_output_enable_gl(struct headless_output *output)
 static int
 headless_output_enable_pixman(struct headless_output *output)
 {
+	const struct pixel_format_info *pfmt;
 	const struct pixman_renderer_output_options options = {
 		.use_shadow = true,
 	};
 
-	output->image_buf = malloc(output->base.current_mode->width *
-				   output->base.current_mode->height * 4);
-	if (!output->image_buf)
-		return -1;
+	pfmt = pixel_format_get_info(headless_formats[0]);
 
-	output->image = pixman_image_create_bits(PIXMAN_x8r8g8b8,
-						 output->base.current_mode->width,
-						 output->base.current_mode->height,
-						 output->image_buf,
-						 output->base.current_mode->width * 4);
+	output->image =
+		pixman_image_create_bits_no_clear(pfmt->pixman_format,
+						  output->base.current_mode->width,
+						  output->base.current_mode->height,
+						  NULL, 0);
+	if (!output->image)
+		return -1;
 
 	if (pixman_renderer_output_create(&output->base, &options) < 0)
 		goto err_renderer;
@@ -238,7 +256,6 @@ headless_output_enable_pixman(struct headless_output *output)
 
 err_renderer:
 	pixman_image_unref(output->image);
-	free(output->image_buf);
 
 	return -1;
 }
@@ -247,9 +264,13 @@ static int
 headless_output_enable(struct weston_output *base)
 {
 	struct headless_output *output = to_headless_output(base);
-	struct headless_backend *b = to_headless_backend(base->compositor);
+	struct headless_backend *b;
 	struct wl_event_loop *loop;
 	int ret = 0;
+
+	assert(output);
+
+	b = to_headless_backend(base->compositor);
 
 	loop = wl_display_get_event_loop(b->compositor->wl_display);
 	output->finish_frame_timer =
@@ -286,6 +307,9 @@ headless_output_set_size(struct weston_output *base,
 	struct headless_output *output = to_headless_output(base);
 	struct weston_head *head;
 	int output_width, output_height;
+
+	if (!output)
+		return -1;
 
 	/* We can only be called once. */
 	assert(!output->base.current_mode);
@@ -361,7 +385,12 @@ headless_head_create(struct weston_compositor *compositor,
 		return -1;
 
 	weston_head_init(&head->base, name);
+
+	head->base.backend_id = headless_head_destroy;
+
 	weston_head_set_connection_status(&head->base, true);
+	weston_head_set_supported_eotf_mask(&head->base,
+					    WESTON_EOTF_MODE_ALL_MASK);
 
 	/* Ideally all attributes of the head would be set here, so that the
 	 * user has all the information when deciding to create outputs.
@@ -374,8 +403,12 @@ headless_head_create(struct weston_compositor *compositor,
 }
 
 static void
-headless_head_destroy(struct headless_head *head)
+headless_head_destroy(struct weston_head *base)
 {
+	struct headless_head *head = to_headless_head(base);
+
+	assert(head);
+
 	weston_head_release(&head->base);
 	free(head);
 }
@@ -388,8 +421,10 @@ headless_destroy(struct weston_compositor *ec)
 
 	weston_compositor_shutdown(ec);
 
-	wl_list_for_each_safe(base, next, &ec->head_list, compositor_link)
-		headless_head_destroy(to_headless_head(base));
+	wl_list_for_each_safe(base, next, &ec->head_list, compositor_link) {
+		if (to_headless_head(base))
+			headless_head_destroy(base);
+	}
 
 	free(b);
 }

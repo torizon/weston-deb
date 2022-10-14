@@ -38,9 +38,11 @@
 
 #include "test-config.h"
 #include "shared/os-compatibility.h"
+#include "shared/string-helpers.h"
 #include "shared/xalloc.h"
 #include <libweston/zalloc.h>
 #include "weston-test-client-helper.h"
+#include "image-iter.h"
 
 #define max(a, b) (((a) > (b)) ? (a) : (b))
 #define min(a, b) (((a) > (b)) ? (b) : (a))
@@ -871,22 +873,6 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 void
-skip(const char *fmt, ...)
-{
-	va_list argp;
-
-	va_start(argp, fmt);
-	vfprintf(stderr, fmt, argp);
-	va_end(argp);
-
-	/* automake tests uses exit code 77. weston-test-runner will see
-	 * this and use it, and then weston-test's sigchld handler (in the
-	 * weston process) will use that as an exit status, which is what
-	 * ninja will see in the end. */
-	exit(77);
-}
-
-void
 expect_protocol_error(struct client *client,
 		      const struct wl_interface *intf,
 		      uint32_t code)
@@ -992,6 +978,7 @@ create_test_surface(struct client *client)
 
 	surface = xzalloc(sizeof *surface);
 
+	surface->client = client;
 	surface->wl_surface =
 		wl_compositor_create_surface(client->wl_compositor);
 	assert(surface->wl_surface);
@@ -1012,6 +999,17 @@ surface_destroy(struct surface *surface)
 	if (surface->buffer)
 		buffer_destroy(surface->buffer);
 	free(surface);
+}
+
+void
+surface_set_opaque_rect(struct surface *surface, const struct rectangle *rect)
+{
+	struct wl_region *region;
+
+	region = wl_compositor_create_region(surface->client->wl_compositor);
+	wl_region_add(region, rect->x, rect->y, rect->width, rect->height);
+	wl_surface_set_opaque_region(surface->wl_surface, region);
+	wl_region_destroy(region);
 }
 
 struct client *
@@ -1147,6 +1145,36 @@ image_filename(const char *basename)
 	return filename;
 }
 
+/** Open a writable file
+ *
+ * \param suffix Custom file name suffix.
+ * \return FILE pointer, or NULL on failure.
+ *
+ * The file name consists of output path, test name, and the given suffix.
+ * If environment variable WESTON_TEST_OUTPUT_PATH is set, it is used as the
+ * directory path, otherwise the current directory is used.
+ *
+ * The file will be writable. If it exists, it is truncated, otherwise it is
+ * created. Failures are logged.
+ */
+FILE *
+fopen_dump_file(const char *suffix)
+{
+	char *fname;
+	FILE *fp;
+
+	str_printf(&fname, "%s/%s-%s.txt", output_path(),
+		   get_test_name(), suffix);
+	fp = fopen(fname, "w");
+	if (!fp) {
+		testlog("Error: failed to open file '%s' for writing: %s\n",
+			fname, strerror(errno));
+	}
+	free(fname);
+
+	return fp;
+}
+
 struct format_map_entry {
 	cairo_format_t cairo;
 	pixman_format_code_t pixman;
@@ -1204,8 +1232,8 @@ range_get(const struct range *r)
 /**
  * Compute the ROI for image comparisons
  *
- * \param img_a An image.
- * \param img_b Another image.
+ * \param ih_a A header for an image.
+ * \param ih_b A header for another image.
  * \param clip_rect Explicit ROI, or NULL for using the whole
  * image area.
  *
@@ -1219,20 +1247,11 @@ range_get(const struct range *r)
  * The ROI is given as pixman_box32_t, where x2,y2 are non-inclusive.
  */
 static pixman_box32_t
-image_check_get_roi(pixman_image_t *img_a, pixman_image_t *img_b,
-		   const struct rectangle *clip_rect)
+image_check_get_roi(const struct image_header *ih_a,
+		    const struct image_header *ih_b,
+		    const struct rectangle *clip_rect)
 {
-	int width_a;
-	int width_b;
-	int height_a;
-	int height_b;
 	pixman_box32_t box;
-
-	width_a = pixman_image_get_width(img_a);
-	height_a = pixman_image_get_height(img_a);
-
-	width_b = pixman_image_get_width(img_b);
-	height_b = pixman_image_get_height(img_b);
 
 	if (clip_rect) {
 		box.x1 = clip_rect->x;
@@ -1242,43 +1261,20 @@ image_check_get_roi(pixman_image_t *img_a, pixman_image_t *img_b,
 	} else {
 		box.x1 = 0;
 		box.y1 = 0;
-		box.x2 = max(width_a, width_b);
-		box.y2 = max(height_a, height_b);
+		box.x2 = max(ih_a->width, ih_b->width);
+		box.y2 = max(ih_a->height, ih_b->height);
 	}
 
 	assert(box.x1 >= 0);
 	assert(box.y1 >= 0);
 	assert(box.x2 > box.x1);
 	assert(box.y2 > box.y1);
-	assert(box.x2 <= width_a);
-	assert(box.x2 <= width_b);
-	assert(box.y2 <= height_a);
-	assert(box.y2 <= height_b);
+	assert(box.x2 <= ih_a->width);
+	assert(box.x2 <= ih_b->width);
+	assert(box.y2 <= ih_a->height);
+	assert(box.y2 <= ih_b->height);
 
 	return box;
-}
-
-struct image_iterator {
-	char *data;
-	int stride; /* bytes */
-};
-
-static void
-image_iter_init(struct image_iterator *it, pixman_image_t *image)
-{
-	pixman_format_code_t fmt;
-
-	it->stride = pixman_image_get_stride(image);
-	it->data = (void *)pixman_image_get_data(image);
-
-	fmt = pixman_image_get_format(image);
-	assert(PIXMAN_FORMAT_BPP(fmt) == 32);
-}
-
-static uint32_t *
-image_iter_get_row(struct image_iterator *it, int y)
-{
-	return (uint32_t *)(it->data + y * it->stride);
 }
 
 struct pixel_diff_stat {
@@ -1351,21 +1347,18 @@ check_images_match(pixman_image_t *img_a, pixman_image_t *img_b,
 {
 	struct range fuzz = range_get(prec);
 	struct pixel_diff_stat diffstat = {};
-	struct image_iterator it_a;
-	struct image_iterator it_b;
+	struct image_header ih_a = image_header_from(img_a);
+	struct image_header ih_b = image_header_from(img_b);
 	pixman_box32_t box;
 	int x, y;
 	uint32_t *pix_a;
 	uint32_t *pix_b;
 
-	box = image_check_get_roi(img_a, img_b, clip_rect);
-
-	image_iter_init(&it_a, img_a);
-	image_iter_init(&it_b, img_b);
+	box = image_check_get_roi(&ih_a, &ih_b, clip_rect);
 
 	for (y = box.y1; y < box.y2; y++) {
-		pix_a = image_iter_get_row(&it_a, y) + box.x1;
-		pix_b = image_iter_get_row(&it_b, y) + box.x1;
+		pix_a = image_header_get_row_u32(&ih_a, y) + box.x1;
+		pix_b = image_header_get_row_u32(&ih_b, y) + box.x1;
 
 		for (x = box.x1; x < box.x2; x++) {
 			if (!fuzzy_match_pixels(*pix_a, *pix_b,
@@ -1435,11 +1428,9 @@ visualize_image_difference(pixman_image_t *img_a, pixman_image_t *img_b,
 	struct pixel_diff_stat diffstat = {};
 	pixman_image_t *diffimg;
 	pixman_image_t *shade;
-	struct image_iterator it_a;
-	struct image_iterator it_b;
-	struct image_iterator it_d;
-	int width;
-	int height;
+	struct image_header ih_a = image_header_from(img_a);
+	struct image_header ih_b = image_header_from(img_b);
+	struct image_header ih_d;
 	pixman_box32_t box;
 	int x, y;
 	uint32_t *pix_a;
@@ -1447,32 +1438,28 @@ visualize_image_difference(pixman_image_t *img_a, pixman_image_t *img_b,
 	uint32_t *pix_d;
 	pixman_color_t shade_color = { 0, 0, 0, 32768 };
 
-	width = pixman_image_get_width(img_a);
-	height = pixman_image_get_height(img_a);
-	box = image_check_get_roi(img_a, img_b, clip_rect);
+	box = image_check_get_roi(&ih_a, &ih_b, clip_rect);
 
 	diffimg = pixman_image_create_bits_no_clear(PIXMAN_x8r8g8b8,
-						    width, height, NULL, 0);
+						    ih_a.width, ih_a.height,
+						    NULL, 0);
+	ih_d = image_header_from(diffimg);
 
 	/* Fill diffimg with a black-shaded copy of img_a, and then fill
 	 * the clip_rect area with original img_a.
 	 */
 	shade = pixman_image_create_solid_fill(&shade_color);
 	pixman_image_composite32(PIXMAN_OP_SRC, img_a, shade, diffimg,
-				 0, 0, 0, 0, 0, 0, width, height);
+				 0, 0, 0, 0, 0, 0, ih_a.width, ih_a.height);
 	pixman_image_unref(shade);
 	pixman_image_composite32(PIXMAN_OP_SRC, img_a, NULL, diffimg,
 				 box.x1, box.y1, 0, 0, box.x1, box.y1,
 				 box.x2 - box.x1, box.y2 - box.y1);
 
-	image_iter_init(&it_a, img_a);
-	image_iter_init(&it_b, img_b);
-	image_iter_init(&it_d, diffimg);
-
 	for (y = box.y1; y < box.y2; y++) {
-		pix_a = image_iter_get_row(&it_a, y) + box.x1;
-		pix_b = image_iter_get_row(&it_b, y) + box.x1;
-		pix_d = image_iter_get_row(&it_d, y) + box.x1;
+		pix_a = image_header_get_row_u32(&ih_a, y) + box.x1;
+		pix_b = image_header_get_row_u32(&ih_b, y) + box.x1;
+		pix_d = image_header_get_row_u32(&ih_d, y) + box.x1;
 
 		for (x = box.x1; x < box.x2; x++) {
 			if (fuzzy_match_pixels(*pix_a, *pix_b,
@@ -1508,16 +1495,12 @@ write_image_as_png(pixman_image_t *image, const char *fname)
 {
 	cairo_surface_t *cairo_surface;
 	cairo_status_t status;
-	cairo_format_t fmt;
+	struct image_header ih = image_header_from(image);
+	cairo_format_t fmt = format_pixman2cairo(ih.pixman_format);
 
-	fmt = format_pixman2cairo(pixman_image_get_format(image));
-
-	cairo_surface = cairo_image_surface_create_for_data(
-			(void *)pixman_image_get_data(image),
-			fmt,
-			pixman_image_get_width(image),
-			pixman_image_get_height(image),
-			pixman_image_get_stride(image));
+	cairo_surface = cairo_image_surface_create_for_data(ih.data, fmt,
+							    ih.width, ih.height,
+							    ih.stride_bytes);
 
 	status = cairo_surface_write_to_png(cairo_surface, fname);
 	if (status != CAIRO_STATUS_SUCCESS) {
@@ -1536,21 +1519,17 @@ static pixman_image_t *
 image_convert_to_a8r8g8b8(pixman_image_t *image)
 {
 	pixman_image_t *ret;
-	int width;
-	int height;
+	struct image_header ih = image_header_from(image);
 
-	if (pixman_image_get_format(image) == PIXMAN_a8r8g8b8)
+	if (ih.pixman_format == PIXMAN_a8r8g8b8)
 		return pixman_image_ref(image);
 
-	width = pixman_image_get_width(image);
-	height = pixman_image_get_height(image);
-
-	ret = pixman_image_create_bits_no_clear(PIXMAN_a8r8g8b8, width, height,
-						NULL, 0);
+	ret = pixman_image_create_bits_no_clear(PIXMAN_a8r8g8b8,
+						ih.width, ih.height, NULL, 0);
 	assert(ret);
 
 	pixman_image_composite32(PIXMAN_OP_SRC, image, NULL, ret,
-				 0, 0, 0, 0, 0, 0, width, height);
+				 0, 0, 0, 0, 0, 0, ih.width, ih.height);
 
 	return ret;
 }

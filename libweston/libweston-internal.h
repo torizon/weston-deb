@@ -43,6 +43,37 @@
 #include <libweston/libweston.h>
 #include "color.h"
 
+/* compositor <-> renderer interface */
+
+struct weston_renderer {
+	int (*read_pixels)(struct weston_output *output,
+			   const struct pixel_format_info *format, void *pixels,
+			   uint32_t x, uint32_t y,
+			   uint32_t width, uint32_t height);
+	void (*repaint_output)(struct weston_output *output,
+			       pixman_region32_t *output_damage);
+	void (*flush_damage)(struct weston_surface *surface,
+			     struct weston_buffer *buffer);
+	void (*attach)(struct weston_surface *es, struct weston_buffer *buffer);
+	void (*destroy)(struct weston_compositor *ec);
+
+	/** See weston_surface_copy_content() */
+	int (*surface_copy_content)(struct weston_surface *surface,
+				    void *target, size_t size,
+				    int src_x, int src_y,
+				    int width, int height);
+
+	/** See weston_compositor_import_dmabuf() */
+	bool (*import_dmabuf)(struct weston_compositor *ec,
+			      struct linux_dmabuf_buffer *buffer);
+
+	const struct weston_drm_format_array *
+			(*get_supported_formats)(struct weston_compositor *ec);
+
+	bool (*fill_buffer_info)(struct weston_compositor *ec,
+				 struct weston_buffer *buffer);
+};
+
 /* weston_buffer */
 
 void
@@ -50,7 +81,8 @@ weston_buffer_send_server_error(struct weston_buffer *buffer,
 				const char *msg);
 void
 weston_buffer_reference(struct weston_buffer_reference *ref,
-			struct weston_buffer *buffer);
+			struct weston_buffer *buffer,
+			enum weston_buffer_reference_type type);
 
 void
 weston_buffer_release_move(struct weston_buffer_release_reference *dest,
@@ -389,6 +421,8 @@ const uint64_t *
 weston_drm_format_get_modifiers(const struct weston_drm_format *format,
 				unsigned int *count_out);
 
+void
+weston_compositor_destroy_touch_calibrator(struct weston_compositor *compositor);
 /**
  * paint node
  *
@@ -427,5 +461,10 @@ weston_view_find_paint_node(struct weston_view *view,
 /* others */
 int
 wl_data_device_manager_init(struct wl_display *display);
+
+/* Exclusively for unit tests */
+
+bool
+weston_output_set_color_outcome(struct weston_output *output);
 
 #endif

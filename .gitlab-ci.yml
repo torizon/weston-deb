@@ -43,7 +43,7 @@
 variables:
   FDO_UPSTREAM_REPO: wayland/weston
   FDO_REPO_SUFFIX: "$BUILD_OS/$BUILD_ARCH"
-  FDO_DISTRIBUTION_TAG: '2021-11-25.0-dmabuf-feedback'
+  FDO_DISTRIBUTION_TAG: '2022-07-13.00-wayland-protocols-1.26'
 
 
 include:
@@ -202,7 +202,7 @@ aarch64-debian-container_prep:
     - $BUILDDIR/weston-virtme
     - $PREFIX
     reports:
-      junit: $BUILDDIR/meson-logs/testlog.junit.xml
+      junit: $BUILDDIR/meson-logs/testlog-per-test-asan.sh.junit.xml
 
 # Same as above, but without running any tests.
 .build-no-test:
@@ -283,8 +283,8 @@ aarch64-debian-container_prep:
       -Dwerror=true
       -Dtest-skip-is-failure=true
       -Dlauncher-libseat=true
-      -Ddeprecated-backend-fbdev=true
-      -Ddeprecated-weston-launch=true
+      -Ddeprecated-color-management-static=true
+      -Ddeprecated-color-management-colord=true
   after_script:
   - ninja -C "$BUILDDIR" coverage-html > "$BUILDDIR/meson-logs/ninja-coverage-html.txt"
   - ninja -C "$BUILDDIR" coverage-xml
@@ -340,7 +340,6 @@ docs-build:
       -Dpipewire=false
       -Dwerror=true
       -Dlauncher-libseat=true
-      -Ddeprecated-weston-launch=true
 
 x86_64-debian-no-gl-build:
   extends:

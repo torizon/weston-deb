@@ -696,29 +696,6 @@ launcher_logind_release_control(struct launcher_logind *wl)
 }
 
 static int
-weston_sd_session_get_vt(const char *sid, unsigned int *out)
-{
-#ifdef HAVE_SYSTEMD_LOGIN_209
-	return sd_session_get_vt(sid, out);
-#else
-	int r;
-	char *tty;
-
-	r = sd_session_get_tty(sid, &tty);
-	if (r < 0)
-		return r;
-
-	r = sscanf(tty, "tty%u", out);
-	free(tty);
-
-	if (r != 1)
-		return -EINVAL;
-
-	return 0;
-#endif
-}
-
-static int
 launcher_logind_activate(struct launcher_logind *wl)
 {
 	DBusMessage *m;
@@ -759,7 +736,7 @@ launcher_logind_get_session(char **session)
 
 static int
 launcher_logind_connect(struct weston_launcher **out, struct weston_compositor *compositor,
-			int tty, const char *seat_id, bool sync_drm)
+			const char *seat_id, bool sync_drm)
 {
 	struct launcher_logind *wl;
 	struct wl_event_loop *loop;
@@ -803,14 +780,9 @@ launcher_logind_connect(struct weston_launcher **out, struct weston_compositor *
 	r = sd_seat_can_tty(t);
 	free(t);
 	if (r > 0) {
-		r = weston_sd_session_get_vt(wl->sid, &wl->vtnr);
+		r = sd_session_get_vt(wl->sid, &wl->vtnr);
 		if (r < 0) {
 			weston_log("logind: session not running on a VT\n");
-			goto err_session;
-		} else if (tty > 0 && wl->vtnr != (unsigned int )tty) {
-			weston_log("logind: requested VT --tty=%d differs from real session VT %u\n",
-				   tty, wl->vtnr);
-			r = -EINVAL;
 			goto err_session;
 		}
 	} else if (r < 0) {
@@ -881,9 +853,6 @@ static int
 launcher_logind_get_vt(struct weston_launcher *launcher)
 {
 	struct launcher_logind *wl = wl_container_of(launcher, wl, base);
-	if (wl->vtnr <= 0) {
-		return -EINVAL;
-	}
 	return wl->vtnr;
 }
 

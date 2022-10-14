@@ -39,6 +39,7 @@ struct weston_color_manager_lcms {
 
 	struct wl_list color_transform_list; /* cmlcms_color_transform::link */
 	struct wl_list color_profile_list; /* cmlcms_color_profile::link */
+	struct cmlcms_color_profile *sRGB_profile; /* stock profile */
 };
 
 static inline struct weston_color_manager_lcms *
@@ -59,6 +60,58 @@ struct cmlcms_color_profile {
 
 	cmsHPROFILE profile;
 	struct cmlcms_md5_sum md5sum;
+
+	/**
+	 * If the profile does support being an output profile and it is used as an
+	 * output then this field represents a light linearizing transfer function
+	 * and it can not be null. The field is null only if the profile is not
+	 * usable as an output profile. The field is set when cmlcms_color_profile
+	 * is created.
+	 */
+	cmsToneCurve *output_eotf[3];
+
+	/**
+	 * If the profile does support being an output profile and it is used as an
+	 * output then this field represents a concatenation of inverse EOTF + VCGT,
+	 * if the tag exists and it can not be null.
+	 * VCGT is part of monitor calibration which means: even though we must
+	 * apply VCGT in the compositor, we pretend that it happens inside the
+	 * monitor. This is how the classic color management and ICC profiles work.
+	 * The ICC profile (ignoring the VCGT tag) characterizes the output which
+	 * is VCGT + monitor behavior. The field is null only if the profile is not
+	 * usable as an output profile. The field is set when cmlcms_color_profile
+	 * is created.
+	 */
+	cmsToneCurve *output_inv_eotf_vcgt[3];
+
+	/**
+	 * VCGT tag cached from output profile, it could be null if not exist
+	 */
+	cmsToneCurve *vcgt[3];
+};
+
+/**
+ *  Type of LCMS transforms
+ */
+enum cmlcms_category {
+	/**
+	 * Uses combination of input profile with output profile, but
+	 * without INV EOTF or with additional EOTF in the transform pipeline
+	 * input→blend = input profile + output profile + output EOTF
+	 */
+	CMLCMS_CATEGORY_INPUT_TO_BLEND = 0,
+
+	/**
+	 * Uses INV EOTF only concatenated with VCGT tag if present
+	 * blend→output = output inverse EOTF + VCGT
+	 */
+	CMLCMS_CATEGORY_BLEND_TO_OUTPUT,
+
+	/**
+	 * Transform uses input profile and output profile as is
+	 * input→output = input profile + output profile + VCGT
+	 */
+	CMLCMS_CATEGORY_INPUT_TO_OUTPUT,
 };
 
 static inline struct cmlcms_color_profile *
@@ -78,18 +131,12 @@ cmlcms_get_color_profile_from_icc(struct weston_color_manager *cm,
 void
 cmlcms_destroy_color_profile(struct weston_color_profile *cprof_base);
 
-/*
- * Perhaps a placeholder, until we get actual color spaces involved and
- * see how this would work better.
- */
-enum cmlcms_color_transform_type {
-	CMLCMS_TYPE_EOTF_sRGB = 0,
-	CMLCMS_TYPE_EOTF_sRGB_INV,
-	CMLCMS_TYPE__END,
-};
 
 struct cmlcms_color_transform_search_param {
-	enum cmlcms_color_transform_type type;
+	enum cmlcms_category category;
+	struct cmlcms_color_profile *input_profile;
+	struct cmlcms_color_profile *output_profile;
+	cmsUInt32Number intent_output;	/* selected intent from output profile */
 };
 
 struct cmlcms_color_transform {
@@ -100,8 +147,15 @@ struct cmlcms_color_transform {
 
 	struct cmlcms_color_transform_search_param search_key;
 
-	/* for EOTF types */
-	cmsToneCurve *curve;
+	/**
+	 * 3D LUT color mapping part of the transformation, if needed.
+	 * For category CMLCMS_CATEGORY_INPUT_TO_OUTPUT it includes pre-curve and
+	 * post-curve.
+	 * For category CMLCMS_CATEGORY_INPUT_TO_BLEND it includes pre-curve.
+	 * For category CMLCMS_CATEGORY_BLEND_TO_OUTPUT and when identity it is
+	 * not used
+	 */
+	cmsHTRANSFORM cmap_3dlut;
 };
 
 static inline struct cmlcms_color_transform *
@@ -116,5 +170,28 @@ cmlcms_color_transform_get(struct weston_color_manager_lcms *cm,
 
 void
 cmlcms_color_transform_destroy(struct cmlcms_color_transform *xform);
+
+struct cmlcms_color_profile *
+ref_cprof(struct cmlcms_color_profile *cprof);
+
+void
+unref_cprof(struct cmlcms_color_profile *cprof);
+
+bool
+cmlcms_create_stock_profile(struct weston_color_manager_lcms *cm);
+
+void
+cmlcms_color_profile_destroy(struct cmlcms_color_profile *cprof);
+
+bool
+retrieve_eotf_and_output_inv_eotf(cmsContext lcms_ctx,
+				  cmsHPROFILE hProfile,
+				  cmsToneCurve *output_eotf[3],
+				  cmsToneCurve *output_inv_eotf_vcgt[3],
+				  cmsToneCurve *vcgt[3],
+				  unsigned int num_points);
+
+unsigned int
+cmlcms_reasonable_1D_points(void);
 
 #endif /* WESTON_COLOR_LCMS_H */

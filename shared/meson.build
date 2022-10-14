@@ -4,7 +4,7 @@ srcs_libshared = [
 	'signal.c',
 	'file-util.c',
 	'os-compatibility.c',
-	'xalloc.c',
+        'process-util.c',
 ]
 deps_libshared = [dep_wayland_client, dep_wayland_server]
 
@@ -20,6 +20,26 @@ dep_libshared = declare_dependency(
 	link_with: lib_libshared,
 	include_directories: public_inc,
 	dependencies: deps_libshared
+)
+
+xcb_dep = dependency('xcb', required: false)
+
+xcb_xwayland_srcs = [
+	'xcb-xwayland.c',
+]
+
+lib_xcb_xwayland = static_library(
+	'xcb-xwayland',
+	xcb_xwayland_srcs,
+	include_directories: common_inc,
+	dependencies: [ xcb_dep ],
+	install: false,
+	build_by_default: false,
+)
+
+dep_xcb_xwayland = declare_dependency(
+	link_with: lib_xcb_xwayland,
+	include_directories: public_inc,
 )
 
 srcs_cairo_shared = [
@@ -38,10 +58,11 @@ deps_cairo_shared = [
 
 dep_pango = dependency('pango', required: false)
 dep_pangocairo = dependency('pangocairo', required: false)
+dep_fontconfig = dependency('fontconfig', required: false)
 dep_glib = dependency('glib-2.0', version: '>= 2.36', required: false)
 
-if dep_pango.found() and dep_pangocairo.found() and dep_glib.found()
-	deps_cairo_shared += [ dep_pango, dep_pangocairo, dep_glib ]
+if dep_pango.found() and dep_pangocairo.found() and dep_fontconfig.found() and dep_glib.found()
+	deps_cairo_shared += [ dep_pango, dep_pangocairo, dep_fontconfig, dep_glib ]
 	config_h.set('HAVE_PANGO', '1')
 endif
 

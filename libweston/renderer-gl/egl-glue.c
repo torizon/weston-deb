@@ -31,6 +31,7 @@
 
 #include "shared/helpers.h"
 #include "shared/platform.h"
+#include "shared/string-helpers.h"
 
 #include "gl-renderer.h"
 #include "gl-renderer-internal.h"
@@ -477,7 +478,7 @@ gl_renderer_set_egl_device(struct gl_renderer *gr)
 		return;
 	}
 
-	gl_renderer_log_extensions("EGL device extensions", extensions);
+	gl_renderer_log_extensions(gr, "EGL device extensions", extensions);
 
 	/* Try to query the render node using EGL_DRM_RENDER_NODE_FILE_EXT */
 	if (weston_check_egl_extension(extensions, "EGL_EXT_device_drm_render_node"))
@@ -490,8 +491,10 @@ gl_renderer_set_egl_device(struct gl_renderer *gr)
 		gr->drm_device = gr->query_device_string(gr->egl_device,
 							 EGL_DRM_DEVICE_FILE_EXT);
 
-	if (!gr->drm_device)
-		weston_log("failed to query DRM device from EGL\n");
+	if (gr->drm_device)
+		weston_log("Using rendering device: %s\n", gr->drm_device);
+	else
+		weston_log("warning: failed to query rendering device from EGL\n");
 }
 
 int
@@ -573,8 +576,7 @@ gl_renderer_setup_egl_client_extensions(struct gl_renderer *gr)
 		return 0;
 	}
 
-	gl_renderer_log_extensions("EGL client extensions",
-				   extensions);
+	gl_renderer_log_extensions(gr, "EGL client extensions", extensions);
 
 	if (weston_check_egl_extension(extensions, "EGL_EXT_device_query")) {
 		gr->query_display_attrib =
@@ -594,8 +596,10 @@ gl_renderer_setup_egl_client_extensions(struct gl_renderer *gr)
 		weston_log("warning: EGL_EXT_platform_base not supported.\n");
 
 		/* Surfaceless is unusable without platform_base extension */
-		if (gr->platform == EGL_PLATFORM_SURFACELESS_MESA)
+		if (gr->platform == EGL_PLATFORM_SURFACELESS_MESA) {
+			weston_log("Error: EGL surfaceless platform cannot be used.\n");
 			return -1;
+		}
 
 		return 0;
 	}
@@ -615,6 +619,7 @@ gl_renderer_setup_egl_client_extensions(struct gl_renderer *gr)
 	/* at this point we definitely have some platform extensions but
 	 * haven't found the supplied platform, so chances are it's
 	 * not supported. */
+	weston_log("Error: EGL does not support %s platform.\n", extension_suffix);
 
 	return -1;
 }
@@ -738,6 +743,26 @@ gl_renderer_setup_egl_extensions(struct weston_compositor *ec)
 		weston_log("warning: Disabling explicit synchronization due"
 			   "to missing EGL_KHR_wait_sync extension\n");
 	}
+
+	weston_log("EGL features:\n");
+	weston_log_continue(STAMP_SPACE "EGL Wayland extension: %s\n",
+			    yesno(gr->has_bind_display));
+	weston_log_continue(STAMP_SPACE "context priority: %s\n",
+			    yesno(gr->has_context_priority));
+	weston_log_continue(STAMP_SPACE "buffer age: %s\n",
+			    yesno(gr->has_egl_buffer_age));
+	weston_log_continue(STAMP_SPACE "partial update: %s\n",
+			    yesno(gr->has_egl_partial_update));
+	weston_log_continue(STAMP_SPACE "swap buffers with damage: %s\n",
+			    yesno(gr->swap_buffers_with_damage));
+	weston_log_continue(STAMP_SPACE "configless context: %s\n",
+			    yesno(gr->has_configless_context));
+	weston_log_continue(STAMP_SPACE "surfaceless context: %s\n",
+			    yesno(gr->has_surfaceless_context));
+	weston_log_continue(STAMP_SPACE "dmabuf support: %s\n",
+			    gr->has_dmabuf_import ?
+			    (gr->has_dmabuf_import_modifiers ? "modifiers" : "legacy") :
+			    "no");
 
 	return 0;
 }

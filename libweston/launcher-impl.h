@@ -32,7 +32,7 @@ struct weston_launcher;
 struct launcher_interface {
 	char *name;
 	int (* connect) (struct weston_launcher **launcher_out, struct weston_compositor *compositor,
-			 int tty, const char *seat_id, bool sync_drm);
+			 const char *seat_id, bool sync_drm);
 	void (* destroy) (struct weston_launcher *launcher);
 	int (* open) (struct weston_launcher *launcher, const char *path, int flags);
 	void (* close) (struct weston_launcher *launcher, int fd);
@@ -47,5 +47,3 @@ struct weston_launcher {
 
 extern const struct launcher_interface launcher_libseat_iface;
 extern const struct launcher_interface launcher_logind_iface;
-extern const struct launcher_interface launcher_weston_launch_iface;
-extern const struct launcher_interface launcher_direct_iface;

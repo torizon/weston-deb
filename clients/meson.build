@@ -35,6 +35,10 @@ dep_toytoolkit = declare_dependency(
 	link_with: lib_toytoolkit,
 	dependencies: deps_toytoolkit,
 )
+dep_gbm = dependency('gbm', required: false)
+if dep_gbm.found() and dep_gbm.version().version_compare('>= 21.3')
+	config_h.set('HAVE_GBM_BO_CREATE_WITH_MODIFIERS2', '1')
+endif
 
 simple_clients_enabled = get_option('simple-clients')
 simple_build_all = simple_clients_enabled.contains('all')
@@ -60,6 +64,8 @@ simple_clients = [
 			'../libweston/pixel-formats.c',
 			linux_dmabuf_unstable_v1_client_protocol_h,
 			linux_dmabuf_unstable_v1_protocol_c,
+			presentation_time_client_protocol_h,
+			presentation_time_protocol_c,
 			xdg_shell_client_protocol_h,
 			xdg_shell_protocol_c,
 		],
@@ -125,7 +131,12 @@ simple_clients = [
 			ivi_application_client_protocol_h,
 			ivi_application_protocol_c,
 		],
-		'dep_objs': [ dep_wayland_client, dep_libshared, dep_libm ],
+		'dep_objs': [
+			dep_libm,
+			dep_libshared,
+			dep_matrix_c,
+			dep_wayland_client,
+		],
 		'deps': [ 'egl', 'wayland-egl', 'glesv2', 'wayland-cursor' ],
 		'options': [ 'renderer-gl' ]
 	},
@@ -216,21 +227,6 @@ tools_list = [
 			weston_debug_protocol_c,
 		],
 		'deps': [ dep_wayland_client ]
-	},
-	{
-		'name': 'info',
-		'sources': [
-			'weston-info.c',
-			presentation_time_client_protocol_h,
-			presentation_time_protocol_c,
-			linux_dmabuf_unstable_v1_client_protocol_h,
-			linux_dmabuf_unstable_v1_protocol_c,
-			tablet_unstable_v2_client_protocol_h,
-			tablet_unstable_v2_protocol_c,
-			xdg_output_unstable_v1_client_protocol_h,
-			xdg_output_unstable_v1_protocol_c,
-		],
-		'deps': [ dep_wayland_client, dep_libshared ]
 	},
 	{
 		'name': 'terminal',

@@ -37,6 +37,7 @@
 #include "compositor/weston.h"
 #include "fullscreen-shell-unstable-v1-server-protocol.h"
 #include "shared/helpers.h"
+#include "shell-utils.h"
 
 struct fullscreen_shell {
 	struct wl_client *client;
@@ -80,7 +81,7 @@ struct fs_output {
 	struct weston_surface *surface;
 	struct wl_listener surface_destroyed;
 	struct weston_view *view;
-	struct weston_view *black_view;
+	struct weston_curtain *curtain;
 	struct weston_transform transform; /* matrix from x, y */
 
 	int presented_for_mode;
@@ -226,37 +227,27 @@ black_surface_committed(struct weston_surface *es, int32_t sx, int32_t sy)
 {
 }
 
-static struct weston_view *
-create_black_surface(struct weston_compositor *ec, struct fs_output *fsout,
-		     float x, float y, int w, int h)
+static struct weston_curtain *
+create_curtain(struct weston_compositor *ec, struct fs_output *fsout,
+	       float x, float y, int w, int h)
 {
-	struct weston_surface *surface = NULL;
-	struct weston_view *view;
+	struct weston_curtain_params curtain_params = {
+		.r = 0.0, .g = 0.0, .b = 0.0, .a = 1.0,
+		.x = x, .y = y, .width = w, .height = h,
+		.surface_committed = black_surface_committed,
+		.get_label = NULL,
+		.surface_private = fsout,
+		.capture_input = true,
+	};
+	struct weston_curtain *curtain;
 
-	surface = weston_surface_create(ec);
-	if (surface == NULL) {
+	curtain = weston_curtain_create(ec, &curtain_params);
+	if (!curtain) {
 		weston_log("no memory\n");
 		return NULL;
 	}
-	view = weston_view_create(surface);
-	if (!view) {
-		weston_surface_destroy(surface);
-		weston_log("no memory\n");
-		return NULL;
-	}
 
-	surface->committed = black_surface_committed;
-	surface->committed_private = fsout;
-	weston_surface_set_color(surface, 0.0f, 0.0f, 0.0f, 1.0f);
-	pixman_region32_fini(&surface->opaque);
-	pixman_region32_init_rect(&surface->opaque, 0, 0, w, h);
-	pixman_region32_fini(&surface->input);
-	pixman_region32_init_rect(&surface->input, 0, 0, w, h);
-
-	weston_surface_set_size(surface, w, h);
-	weston_view_set_position(view, x, y);
-
-	return view;
+	return curtain;
 }
 
 static void
@@ -333,13 +324,12 @@ fs_output_create(struct fullscreen_shell *shell, struct weston_output *output)
 
 	fsout->surface_destroyed.notify = surface_destroyed;
 	fsout->pending.surface_destroyed.notify = pending_surface_destroyed;
-	fsout->black_view = create_black_surface(shell->compositor, fsout,
-						 output->x, output->y,
-						 output->width, output->height);
-	fsout->black_view->surface->is_mapped = true;
-	fsout->black_view->is_mapped = true;
+	fsout->curtain = create_curtain(shell->compositor, fsout,
+					output->x, output->y,
+					output->width, output->height);
+	fsout->curtain->view->is_mapped = true;
 	weston_layer_entry_insert(&shell->layer.view_list,
-		       &fsout->black_view->layer_link);
+			          &fsout->curtain->view->layer_link);
 	wl_list_init(&fsout->transform.link);
 
 	if (!wl_list_empty(&shell->default_surface_list)) {
@@ -371,41 +361,6 @@ restore_output_mode(struct weston_output *output)
 {
 	if (output && output->original_mode)
 		weston_output_mode_switch_to_native(output);
-}
-
-/*
- * Returns the bounding box of a surface and all its sub-surfaces,
- * in surface-local coordinates. */
-static void
-surface_subsurfaces_boundingbox(struct weston_surface *surface, int32_t *x,
-				int32_t *y, int32_t *w, int32_t *h) {
-	pixman_region32_t region;
-	pixman_box32_t *box;
-	struct weston_subsurface *subsurface;
-
-	pixman_region32_init_rect(&region, 0, 0,
-	                          surface->width,
-	                          surface->height);
-
-	wl_list_for_each(subsurface, &surface->subsurface_list, parent_link) {
-		pixman_region32_union_rect(&region, &region,
-		                           subsurface->position.x,
-		                           subsurface->position.y,
-		                           subsurface->surface->width,
-		                           subsurface->surface->height);
-	}
-
-	box = pixman_region32_extents(&region);
-	if (x)
-		*x = box->x1;
-	if (y)
-		*y = box->y1;
-	if (w)
-		*w = box->x2 - box->x1;
-	if (h)
-		*h = box->y2 - box->y1;
-
-	pixman_region32_fini(&region);
 }
 
 static void
@@ -520,10 +475,10 @@ fs_output_configure_simple(struct fs_output *fsout,
 		break;
 	}
 
-	weston_view_set_position(fsout->black_view,
+	weston_view_set_position(fsout->curtain->view,
 				 fsout->output->x - surf_x,
 				 fsout->output->y - surf_y);
-	weston_surface_set_size(fsout->black_view->surface,
+	weston_surface_set_size(fsout->curtain->view->surface,
 				fsout->output->width,
 				fsout->output->height);
 }
@@ -670,6 +625,7 @@ fs_output_apply_pending(struct fs_output *fsout)
 			return;
 		}
 		fsout->view->is_mapped = true;
+		fsout->surface->is_mapped = true;
 
 		wl_signal_add(&fsout->surface->destroy_signal,
 			      &fsout->surface_destroyed);
