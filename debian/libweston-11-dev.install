@@ -2,6 +2,7 @@ usr/include/libweston-11
 usr/lib/*/libweston-11.so
 usr/lib/*/pkgconfig/libweston-11.pc
 usr/lib/*/pkgconfig/libweston-desktop-11.pc
+usr/share/libweston-11/protocols/weston-content-protection.xml
 usr/share/libweston-11/protocols/weston-debug.xml
 usr/share/libweston-11/protocols/weston-direct-display.xml
 usr/share/pkgconfig/libweston-11-protocols.pc
