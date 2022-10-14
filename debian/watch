@@ -1,3 +1,2 @@
-#git=git://anongit.freedesktop.org/wayland/weston
 version=3
-https://wayland.freedesktop.org/releases.html releases/weston-(.*)\.tar\.xz
+https://wayland.freedesktop.org/releases.html https://gitlab.freedesktop.org/wayland/weston/-/releases/[\d].*/downloads/weston-([\d].*)\.tar\.xz
