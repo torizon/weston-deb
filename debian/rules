@@ -12,7 +12,7 @@ override_dh_missing:
 	dh_missing --fail-missing -X.la
 
 override_dh_makeshlibs:
-	dh_makeshlibs -Xlibweston-10/ -- -c4 -ldebian/weston/usr/lib/$(DEB_TARGET_MULTIARCH)/weston/
+	dh_makeshlibs -Xlibweston-11/ -- -c4 -ldebian/weston/usr/lib/$(DEB_TARGET_MULTIARCH)/weston/
 
 override_dh_shlibdeps:
 	dh_shlibdeps -O--buildsystem=meson -- -ldebian/weston/usr/lib/$(DEB_TARGET_MULTIARCH)/weston/
@@ -24,7 +24,7 @@ override_dh_fixperms:
 override_dh_install:
 	sed -e '/libdir=/d' \
 	    -e '/includedir=/d' \
-	    -i debian/tmp/usr/share/pkgconfig/libweston-10-protocols.pc
+	    -i debian/tmp/usr/share/pkgconfig/libweston-11-protocols.pc
 	dh_install
 
 %:
