@@ -3617,29 +3617,6 @@ shell_fade_create_fade_out_view(struct shell_surface *shsurf,
 	return view;
 }
 
-static struct weston_view *
-shell_fade_create_fade_out_view(struct shell_surface *shsurf,
-				struct weston_surface *surface)
-{
-	struct weston_view *view;
-	struct weston_output *woutput;
-
-	view = weston_view_create(surface);
-	if (!view)
-		return NULL;
-
-	woutput = get_focused_output(surface->compositor);
-	/* set the initial position and output just in case we happen to not
-	 * move it around and just destroy it */
-	weston_view_set_output(view, woutput);
-	weston_view_set_position(view,
-				 shsurf->view->geometry.x,
-				 shsurf->view->geometry.y);
-	view->is_mapped = true;
-
-	return view;
-}
-
 static void
 shell_fade(struct desktop_shell *shell, enum fade_type type)
 {

@@ -81,9 +81,6 @@ compile_const bool c_need_color_pipeline =
 	c_color_pre_curve != SHADER_COLOR_CURVE_IDENTITY ||
 	c_color_mapping != SHADER_COLOR_MAPPING_IDENTITY;
 
-compile_const bool c_need_color_pipeline =
-	c_color_pre_curve != SHADER_COLOR_CURVE_IDENTITY;
-
 vec4
 yuva2rgba(vec4 yuva)
 {
