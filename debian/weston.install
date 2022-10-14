@@ -7,8 +7,6 @@ usr/lib/*/weston-desktop-shell
 usr/lib/*/weston-ivi-shell-user-interface
 usr/lib/*/weston-keyboard
 usr/lib/*/weston-simple-im
-usr/lib/*/weston/cms-colord.so
-usr/lib/*/weston/cms-static.so
 usr/lib/*/weston/desktop-shell.so
 usr/lib/*/weston/fullscreen-shell.so
 usr/lib/*/weston/hmi-controller.so
