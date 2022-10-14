@@ -9,4 +9,3 @@ usr/lib/*/libweston-11/remoting-plugin.so
 usr/lib/*/libweston-11/wayland-backend.so
 usr/lib/*/libweston-11/x11-backend.so
 usr/lib/*/libweston-11/xwayland.so
-usr/lib/*/libweston-desktop-11.so.*
