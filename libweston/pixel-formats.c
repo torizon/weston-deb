@@ -40,6 +40,7 @@
 #include "shared/helpers.h"
 #include "shared/string-helpers.h"
 #include "shared/weston-drm-fourcc.h"
+#include "shared/xalloc.h"
 #include "wayland-util.h"
 #include "pixel-formats.h"
 
@@ -759,4 +760,38 @@ pixel_format_get_modifier(uint64_t modifier)
 	free(vendor_name);
 
 	return mod_str;
+}
+
+WL_EXPORT uint32_t
+pixel_format_get_shm_format(const struct pixel_format_info *info)
+{
+	/* Only these two format codes differ between wl_shm and DRM fourcc */
+	switch (info->format) {
+	case DRM_FORMAT_ARGB8888:
+		return WL_SHM_FORMAT_ARGB8888;
+	case DRM_FORMAT_XRGB8888:
+		return WL_SHM_FORMAT_XRGB8888;
+	default:
+		break;
+	}
+
+	return info->format;
+}
+
+WL_EXPORT const struct pixel_format_info **
+pixel_format_get_array(const uint32_t *drm_formats, unsigned int formats_count)
+{
+	const struct pixel_format_info **formats;
+	unsigned int i;
+
+	formats = xcalloc(formats_count, sizeof(*formats));
+	for (i = 0; i < formats_count; i++) {
+		formats[i] = pixel_format_get_info(drm_formats[i]);
+		if (!formats[i]) {
+			free(formats);
+			return NULL;
+		}
+	}
+
+	return formats;
 }
