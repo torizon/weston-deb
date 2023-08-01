@@ -1,0 +1,9 @@
+usr/include/libweston-12
+usr/lib/*/libweston-12.so
+usr/lib/*/pkgconfig/libweston-12.pc
+usr/share/libweston-12/protocols/weston-content-protection.xml
+usr/share/libweston-12/protocols/weston-debug.xml
+usr/share/libweston-12/protocols/weston-direct-display.xml
+usr/share/libweston-12/protocols/weston-output-capture.xml
+usr/share/pkgconfig/libweston-12-protocols.pc
+
