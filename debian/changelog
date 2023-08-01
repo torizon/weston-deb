@@ -1,8 +1,8 @@
-weston (12.0.0-1) UNRELEASED; urgency=medium
+weston (12.0.0-1~exp1) experimental; urgency=medium
 
   * New upstream release.
 
- -- Héctor Orón Martínez <zumbi@debian.org>  Tue, 01 Aug 2023 16:29:27 +0200
+ -- Héctor Orón Martínez <zumbi@debian.org>  Tue, 01 Aug 2023 17:04:32 +0200
 
 weston (11.0.0-2) experimental; urgency=medium
 
