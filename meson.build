@@ -1,6 +1,6 @@
 project('weston',
 	'c',
-	version: '12.0.0',
+	version: '12.0.1',
 	default_options: [
 		'warning_level=3',
 		'c_std=gnu99',
@@ -152,6 +152,13 @@ dep_lcms2 = dependency('lcms2', version: '>= 2.9', required: false)
 prog_python = import('python').find_installation('python3')
 files_xxd_py = files('tools/xxd.py')
 cmd_xxd = [ prog_python, files_xxd_py, '@INPUT@', '@OUTPUT@' ]
+
+deps_for_libweston_users = [
+	dep_wayland_server,
+	dep_pixman,
+	dep_xkbcommon,
+]
+
 
 subdir('include')
 subdir('protocol')
