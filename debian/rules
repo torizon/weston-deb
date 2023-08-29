@@ -20,13 +20,6 @@ override_dh_shlibdeps:
 override_dh_fixperms:
 	dh_fixperms -Xusr/bin/weston-launch
 
-# Workaround for https://gitlab.freedesktop.org/wayland/weston/issues/269
-override_dh_install:
-	sed -e '/libdir=/d' \
-	    -e '/includedir=/d' \
-	    -i debian/tmp/usr/share/pkgconfig/libweston-12-protocols.pc
-	dh_install
-
 %:
 	dh $@ --with quilt --buildsystem=meson
 
