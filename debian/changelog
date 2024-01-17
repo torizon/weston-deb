@@ -1,4 +1,4 @@
-weston (13.0.0-1~exp1) UNRELEASED; urgency=medium
+weston (13.0.0-1~exp1) experimental; urgency=medium
 
   [ Dylan Aïssi ]
   * New upstream release. (Closes: #1054695)
