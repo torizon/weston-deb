@@ -1,4 +1,4 @@
-libweston-12.so.0 libweston-12-0 #MINVER#
+libweston-13.so.0 libweston-13-0 #MINVER#
  clear_pointer_focus@Base 12.0.0
  convert_size_by_transform_scale@Base 12.0.0
  linux_dmabuf_buffer_get@Base 12.0.0

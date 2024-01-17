@@ -1,0 +1,13 @@
+usr/lib/*/libweston-13.so.*
+usr/lib/*/libweston-13/color-lcms.so
+usr/lib/*/libweston-13/drm-backend.so
+usr/lib/*/libweston-13/gl-renderer.so
+usr/lib/*/libweston-13/headless-backend.so
+usr/lib/*/libweston-13/pipewire-plugin.so
+usr/lib/*/libweston-13/rdp-backend.so
+usr/lib/*/libweston-13/remoting-plugin.so
+usr/lib/*/libweston-13/wayland-backend.so
+usr/lib/*/libweston-13/x11-backend.so
+usr/lib/*/libweston-13/xwayland.so
+usr/lib/*/libweston-13/pipewire-backend.so
+usr/lib/*/libweston-13/vnc-backend.so
