@@ -6,6 +6,7 @@ weston (13.0.0-1~exp1) UNRELEASED; urgency=medium
   * New upstream release. (Closes: #1054695)
   * Bump SONAME to libweston-13-0
   * Update symbols file
+  * Use format: 3.0 (quilt)
 
   [ Timo Aaltonen ]
   * rules: Drop the workaround to drop includedir from
