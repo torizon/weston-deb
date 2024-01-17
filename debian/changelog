@@ -7,6 +7,7 @@ weston (13.0.0-1~exp1) UNRELEASED; urgency=medium
   * Bump SONAME to libweston-13-0
   * Update symbols file
   * Use format: 3.0 (quilt)
+  * Import Marius Vlad's key
 
   [ Timo Aaltonen ]
   * rules: Drop the workaround to drop includedir from
