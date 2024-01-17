@@ -1,9 +1,15 @@
 weston (13.0.0-1~exp1) UNRELEASED; urgency=medium
 
   * Team upload.
-  * New upstream release.
+
+  [ Dylan Aïssi ]
+  * New upstream release. (Closes: #1054695)
   * Bump SONAME to libweston-13-0
   * Update symbols file
+
+  [ Timo Aaltonen ]
+  * rules: Drop the workaround to drop includedir from
+      libweston-NN-protocols.pc. (LP: #1887301)
 
  -- Dylan Aïssi <daissi@debian.org>  Wed, 17 Jan 2024 20:56:05 +0100
 
