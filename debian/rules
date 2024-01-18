@@ -21,7 +21,7 @@ override_dh_fixperms:
 	dh_fixperms -Xusr/bin/weston-launch
 
 %:
-	dh $@ --with quilt --buildsystem=meson
+	dh $@ --buildsystem=meson
 
 # For maintainer use only, generate a tarball:
 gentarball: SOURCE=$(shell dpkg-parsechangelog|awk '/^Source:/ {print $$2}')

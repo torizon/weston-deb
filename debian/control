@@ -49,7 +49,6 @@ Build-Depends: debhelper (>= 10),
                mesa-common-dev,
                meson (>= 0.52.1),
                pkg-config,
-               quilt,
                wayland-protocols (>= 1.18)
 Standards-Version: 4.4.0
 Rules-Requires-Root: no
