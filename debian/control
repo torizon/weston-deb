@@ -52,7 +52,7 @@ Build-Depends: debhelper (>= 10),
                wayland-protocols (>= 1.31)
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
-Homepage: http://wayland.freedesktop.org/
+Homepage: https://wayland.freedesktop.org/
 Vcs-Git: https://salsa.debian.org/xorg-team/wayland/weston.git
 Vcs-Browser: https://salsa.debian.org/xorg-team/wayland/weston
 
