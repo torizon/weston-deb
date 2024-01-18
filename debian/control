@@ -58,8 +58,7 @@ Vcs-Browser: https://salsa.debian.org/xorg-team/wayland/weston
 
 Package: weston
 Architecture: linux-any
-Depends: adduser,
-         ${misc:Depends},
+Depends: ${misc:Depends},
          ${shlibs:Depends}
 Breaks: libweston-8-dev
 Conflicts: libweston-8-dev
