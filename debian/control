@@ -65,6 +65,7 @@ Breaks: libweston-8-dev
 Conflicts: libweston-8-dev
 Replaces: libweston-8-dev
 Recommends: libgl1-mesa-dri
+Suggests: wayland-utils
 Description: reference implementation of a wayland compositor
  Part of the Wayland project is also the Weston reference implementation
  of a Wayland compositor. Weston can run as an X client or under Linux
