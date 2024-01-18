@@ -1,3 +1,26 @@
+weston (13.0.0-1~exp2) UNRELEASED; urgency=medium
+
+  * Drop outdated references to quilt
+  * Fix short description of libweston-13-dev
+  * Standards-Version: 4.6.2 (no changes required)
+  * Update debian/copyright
+  * Remove trailing whitespace in debian/changelog
+  * Update minimun version of Build-Deps
+      - libdrm-dev >= 2.4.108
+      - libinput-dev >= 1.2.0
+      - libwayland-dev >= 1.22.0
+      - meson >= 0.63.0
+      - wayland-protocols >= 1.31
+  * Add debian/gbp.conf
+  * Use secure URI for homepage
+  * Switch to debhelper-compat 13
+  * Install some binaries in usr/libexec/ instead of usr/lib/*/
+  * Drop useless debian/tmp/ prefix
+  * weston suggests wayland-utils (Closes: #980995)
+  * Mark libweston-13-0 as 'Multi-Arch: same'
+
+ -- Dylan Aïssi <daissi@debian.org>  Thu, 18 Jan 2024 12:52:06 +0100
+
 weston (13.0.0-1~exp1) experimental; urgency=medium
 
   [ Dylan Aïssi ]
