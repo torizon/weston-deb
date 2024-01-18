@@ -6,7 +6,7 @@ Uploaders: Mike Gabriel <sunweaver@debian.org>,
            Héctor Orón Martínez <zumbi@debian.org>,
            Emilio Pozuelo Monfort <pochu@debian.org>,
            Dylan Aïssi <daissi@debian.org>
-Build-Depends: debhelper (>= 10),
+Build-Depends: debhelper-compat (= 13),
                freerdp2-dev,
                libcairo2-dev (>= 1.10.0),
                libcolord-dev (>= 0.1.27),
