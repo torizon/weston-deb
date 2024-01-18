@@ -1,1 +1,0 @@
-weston: setuid-binary usr/bin/weston-launch 4755 root/root

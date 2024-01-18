@@ -18,8 +18,10 @@ weston (13.0.0-1~exp2) UNRELEASED; urgency=medium
   * Drop useless debian/tmp/ prefix
   * weston suggests wayland-utils (Closes: #980995)
   * Mark libweston-13-0 as 'Multi-Arch: same'
+  * Remove all references to weston-launch which was dropped
+      upstream with weston 11
 
- -- Dylan Aïssi <daissi@debian.org>  Thu, 18 Jan 2024 12:52:06 +0100
+ -- Dylan Aïssi <daissi@debian.org>  Thu, 18 Jan 2024 14:07:16 +0100
 
 weston (13.0.0-1~exp1) experimental; urgency=medium
 
