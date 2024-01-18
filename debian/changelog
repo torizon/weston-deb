@@ -346,7 +346,7 @@ weston (1.5.93-1) experimental; urgency=medium
   * d/control:
     + bump wayland version requirement for build.
     + bump build depend on libinput-dev.
-  * Upload to experimental. 
+  * Upload to experimental.
 
  -- Hector Oron <zumbi@debian.org>  Fri, 12 Sep 2014 18:28:31 +0200
 
