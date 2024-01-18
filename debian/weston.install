@@ -4,10 +4,10 @@ usr/bin/weston
 usr/bin/weston-*
 usr/include/weston
 usr/lib/*/pkgconfig/weston.pc
-usr/lib/*/weston-desktop-shell
-usr/lib/*/weston-ivi-shell-user-interface
-usr/lib/*/weston-keyboard
-usr/lib/*/weston-simple-im
+usr/libexec/weston-desktop-shell
+usr/libexec/weston-ivi-shell-user-interface
+usr/libexec/weston-keyboard
+usr/libexec/weston-simple-im
 usr/lib/*/weston/desktop-shell.so
 usr/lib/*/weston/fullscreen-shell.so
 usr/lib/*/weston/hmi-controller.so
