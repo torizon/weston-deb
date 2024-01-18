@@ -98,7 +98,7 @@ Depends: libpixman-1-dev,
          ${shlibs:Depends}
 Replaces: weston (<< 1.12.0-1)
 Breaks: weston (<< 1.12.0-1)
-Description: reference implementation of a wayland compositor (shared libs)
+Description: reference implementation of a wayland compositor (headers)
  Part of the Wayland project is also the Weston reference implementation
  of a Wayland compositor. Weston can run as an X client or under Linux
  KMS and ships with a few demo clients. The Weston compositor is a minimal
