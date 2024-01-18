@@ -1,5 +1,5 @@
-Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Source: http://wayland.freedesktop.org/
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Source: https://wayland.freedesktop.org/
 
 Files: *
 Copyright: © 2016 Armin Krezović
@@ -64,7 +64,7 @@ Files: data/terminal.png
 Copyright: @ 2002-2008 GNOME Project
 License: CC-BY-SA-3.0
 
-Files: src/hash.*
+Files: shared/hash.*
 Copyright: © 2009 Intel Corporation
            © 1988-2004 Keith Packard and Bart Massey.
 License: MIT
