@@ -1,21 +1,3 @@
-color-lcms.so libweston-13-0 #MINVER#
- lcms_optimize_pipeline@Base 13.0.0
- weston_color_manager_create@Base 13.0.0
-drm-backend.so libweston-13-0 #MINVER#
- weston_backend_init@Base 13.0.0
- weston_launcher_activate_vt@Base 13.0.0
- weston_launcher_close@Base 13.0.0
- weston_launcher_connect@Base 13.0.0
- weston_launcher_destroy@Base 13.0.0
- weston_launcher_open@Base 13.0.0
- weston_setup_vt_switch_bindings@Base 13.0.0
-gl-renderer.so libweston-13-0 #MINVER#
- clip_simple@Base 13.0.0
- clip_transformed@Base 13.0.0
- float_difference@Base 13.0.0
- gl_renderer_interface@Base 13.0.0
-headless-backend.so libweston-13-0 #MINVER#
- weston_backend_init@Base 13.0.0
 libweston-13.so.0 libweston-13-0 #MINVER#
  clear_pointer_focus@Base 12.0.0
  convert_size_by_transform_scale@Base 12.0.0
@@ -511,19 +493,3 @@ libweston-13.so.0 libweston-13-0 #MINVER#
  weston_zoom_run@Base 12.0.0
  wl_data_device_manager_init@Base 12.0.0
  wl_data_device_set_keyboard_focus@Base 12.0.0
-pipewire-backend.so libweston-13-0 #MINVER#
- weston_backend_init@Base 13.0.0
-pipewire-plugin.so libweston-13-0 #MINVER#
- weston_module_init@Base 13.0.0
-rdp-backend.so libweston-13-0 #MINVER#
- weston_backend_init@Base 13.0.0
-remoting-plugin.so libweston-13-0 #MINVER#
- weston_module_init@Base 13.0.0
-vnc-backend.so libweston-13-0 #MINVER#
- weston_backend_init@Base 13.0.0
-wayland-backend.so libweston-13-0 #MINVER#
- weston_backend_init@Base 13.0.0
-x11-backend.so libweston-13-0 #MINVER#
- weston_backend_init@Base 13.0.0
-xwayland.so libweston-13-0 #MINVER#
- weston_module_init@Base 13.0.0

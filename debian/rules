@@ -12,7 +12,7 @@ override_dh_missing:
 	dh_missing --fail-missing -X.la
 
 override_dh_makeshlibs:
-	dh_makeshlibs -Xlibweston-12/ -- -c4 -ldebian/weston/usr/lib/$(DEB_TARGET_MULTIARCH)/weston/
+	dh_makeshlibs -Xlibweston-13/ -- -c4 -ldebian/weston/usr/lib/$(DEB_TARGET_MULTIARCH)/weston/
 
 override_dh_shlibdeps:
 	dh_shlibdeps -O--buildsystem=meson -- -ldebian/weston/usr/lib/$(DEB_TARGET_MULTIARCH)/weston/
