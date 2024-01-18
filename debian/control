@@ -76,6 +76,7 @@ Description: reference implementation of a wayland compositor
 Package: libweston-13-0
 Section: libs
 Architecture: linux-any
+Multi-Arch: same
 Depends: ${misc:Depends}, ${shlibs:Depends}
 Replaces: weston (<< 1.12.0-1)
 Breaks: weston (<< 1.12.0-1)
