@@ -1,3 +1,9 @@
+weston (13.0.0-1) unstable; urgency=medium
+
+  * Upload to unstable
+
+ -- Dylan Aïssi <daissi@debian.org>  Mon, 22 Jan 2024 10:00:54 +0100
+
 weston (13.0.0-1~exp2) experimental; urgency=medium
 
   * Drop outdated references to quilt
