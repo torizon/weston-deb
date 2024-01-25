@@ -18,4 +18,4 @@ usr/lib/*/weston/screen-share.so
 usr/lib/*/weston/systemd-notify.so
 usr/share/wayland-sessions/weston.desktop
 usr/share/weston
-usr/share/man/man7/weston-vnc.7
+usr/share/man
