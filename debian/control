@@ -91,6 +91,7 @@ Description: reference implementation of a wayland compositor (shared libs)
 Package: libweston-13-dev
 Section: libdevel
 Architecture: linux-any
+Multi-Arch: same
 Depends: libpixman-1-dev,
          libwayland-dev,
          libweston-13-0 (= ${binary:Version}),
