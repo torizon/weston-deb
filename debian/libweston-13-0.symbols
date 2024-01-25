@@ -1,4 +1,5 @@
 libweston-13.so.0 libweston-13-0 #MINVER#
+* Build-Depends-Package: libweston-13-dev
  clear_pointer_focus@Base 12.0.0
  convert_size_by_transform_scale@Base 12.0.0
  linux_dmabuf_buffer_get@Base 12.0.0
