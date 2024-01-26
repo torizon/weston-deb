@@ -25,8 +25,8 @@ Build-Depends: debhelper-compat (= 13),
                libneatvnc-dev (>= 0.7.0) [!ia64 !sparc64],
                libpam0g-dev,
                libpango1.0-dev,
-               libpixman-1-dev (>= 0.25.2),
                libpipewire-0.3-dev,
+               libpixman-1-dev (>= 0.25.2),
                libpng-dev,
                libseat-dev (>= 0.4),
                libsystemd-dev,
@@ -76,7 +76,8 @@ Package: libweston-13-0
 Section: libs
 Architecture: linux-any
 Multi-Arch: same
-Depends: ${misc:Depends}, ${shlibs:Depends}
+Depends: ${misc:Depends},
+         ${shlibs:Depends}
 Replaces: weston (<< 1.12.0-1)
 Breaks: weston (<< 1.12.0-1)
 Description: reference implementation of a wayland compositor (shared libs)

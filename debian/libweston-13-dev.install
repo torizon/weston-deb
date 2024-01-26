@@ -6,4 +6,3 @@ usr/share/libweston-13/protocols/weston-debug.xml
 usr/share/libweston-13/protocols/weston-direct-display.xml
 usr/share/libweston-13/protocols/weston-output-capture.xml
 usr/share/pkgconfig/libweston-13-protocols.pc
-

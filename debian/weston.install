@@ -4,10 +4,6 @@ usr/bin/weston
 usr/bin/weston-*
 usr/include/weston
 usr/lib/*/pkgconfig/weston.pc
-usr/libexec/weston-desktop-shell
-usr/libexec/weston-ivi-shell-user-interface
-usr/libexec/weston-keyboard
-usr/libexec/weston-simple-im
 usr/lib/*/weston/desktop-shell.so
 usr/lib/*/weston/fullscreen-shell.so
 usr/lib/*/weston/hmi-controller.so
@@ -16,6 +12,10 @@ usr/lib/*/weston/kiosk-shell.so
 usr/lib/*/weston/libexec_weston.so*
 usr/lib/*/weston/screen-share.so
 usr/lib/*/weston/systemd-notify.so
+usr/libexec/weston-desktop-shell
+usr/libexec/weston-ivi-shell-user-interface
+usr/libexec/weston-keyboard
+usr/libexec/weston-simple-im
+usr/share/man
 usr/share/wayland-sessions/weston.desktop
 usr/share/weston
-usr/share/man
