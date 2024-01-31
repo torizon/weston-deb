@@ -1,0 +1,5 @@
+# Upstream testsuite is not yet installable, see
+# https://gitlab.freedesktop.org/wayland/weston/-/issues/368
+Test-Command: dh_auto_configure; dh_auto_build; dh_auto_test
+Depends: @builddeps@
+Restrictions: allow-stderr

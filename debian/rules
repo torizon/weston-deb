@@ -8,7 +8,7 @@ override_dh_auto_configure:
 
 override_dh_auto_test:
 	mkdir -p $(CURDIR)/debian/tmp/tmp/xdgruntimedir
-	XDG_RUNTIME_DIR=$(CURDIR)/debian/tmp/tmp/xdgruntimedir dh_auto_test || true
+	XDG_RUNTIME_DIR=$(CURDIR)/debian/tmp/tmp/xdgruntimedir dh_auto_test
 
 override_dh_missing:
 	dh_missing --fail-missing -X.la

@@ -1,0 +1,20 @@
+Description: Skip the xwayland test because it doesn't work on Debian at
+ build time, nor on the autopkgtest infrastructure. It fails with:
+ > failed to bind to /tmp/.X11-unix/X0: No such file or directory
+Author: Dylan Aïssi <daissi@debian.org>
+
+--- a/tests/xwayland-test.c
++++ b/tests/xwayland-test.c
+@@ -51,6 +51,12 @@
+ static enum test_result_code
+ fixture_setup(struct weston_test_harness *harness)
+ {
++	/* Skip the xwayland test because it doesn't work on Debian at
++	   build time, nor on the autopkgtest infrastructure. It fails with:
++	   > failed to bind to /tmp/.X11-unix/X0: No such file or directory
++	*/
++	return 77;
++
+ 	struct compositor_setup setup;
+ 
+ 	unsetenv("DISPLAY");
