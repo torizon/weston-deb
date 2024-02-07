@@ -19,7 +19,8 @@ override_dh_auto_configure:
 	        -Dbackend-rdp=$(BACKEND_RDP) \
 	        -Dbackend-vnc=$(BACKEND_VNC) \
 	        -Dscreenshare=true \
-		-Dsystemd=true
+			-Dlauncher-libseat=true
+			-Dsystemd=true
 
 override_dh_auto_test:
 	mkdir -p $(CURDIR)/debian/tmp/tmp/xdgruntimedir
