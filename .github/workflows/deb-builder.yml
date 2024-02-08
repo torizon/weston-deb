@@ -1,0 +1,44 @@
+name: Build Debian Package
+
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ['debian:stable', 'debian:testing', 'debian:unstable']
+        arch: ['amd64', 'arm64', 'armhf']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update base container
+        run: sudo apt-get -y update
+
+      - name: Set up binfmt with qemu
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build Debian Package
+        uses: leonheldattoradex/build-deb-action@v1.7.1
+        env:
+          DEB_BUILD_OPTIONS: noautodbgsym
+        with:
+          buildpackage-opts: --build=binary --no-sign
+          host-arch: ${{ matrix.arch }}
+          apt-opts: --install-recommends
+          extra-build-deps: ca-certificates
+          docker-image: ${{ matrix.os }}
+  
+      - name: Generating artifact directory name
+        run: |
+          os_no_colon=$(echo "${{ matrix.os }}" | tr ':' '-')
+          echo "artifacts=weston-${os_no_colon}-${{ matrix.arch }}" >> $GITHUB_ENV
+
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifacts }}
+          path: debian/artifacts/*
+          retention-days: 90
