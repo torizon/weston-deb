@@ -5,7 +5,8 @@ Maintainer: Debian X Strike Force <debian-x@lists.debian.org>
 Uploaders: Mike Gabriel <sunweaver@debian.org>,
            Héctor Orón Martínez <zumbi@debian.org>,
            Emilio Pozuelo Monfort <pochu@debian.org>
-Build-Depends: debhelper (>= 10),
+Build-Depends: cmake,
+	       debhelper (>= 10),
                freerdp2-dev,
                libcairo2-dev (>= 1.10.0),
                libcolord-dev (>= 0.1.27),
