@@ -1,3 +1,17 @@
+weston (13.0.0-2) unstable; urgency=medium
+
+  * Mark libweston-13-dev as 'Multi-Arch: same'
+  * Install all manpages through weston.install
+  * Enable all hardening flags
+  * Add Build-Depends-Package field in symbols file
+  * Add debian/upstream/metadata
+  * Apply wrap-and-sort -a
+  * Skip xwayland test since it fails at build time and on the
+      autopkgtest infrastructure
+  * Use build time tests as autopkgtest until upstream tests can be installed
+
+ -- Dylan Aïssi <daissi@debian.org>  Thu, 22 Feb 2024 17:45:02 +0100
+
 weston (13.0.0-1) unstable; urgency=medium
 
   * Upload to unstable
