@@ -2,8 +2,23 @@
 
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 
+ifneq (,$(filter i64,$(DEB_HOST_ARCH)))
+BACKEND_RDP=false
+else
+BACKEND_RDP=true
+endif
+
+ifneq (,$(filter i64 sparc64,$(DEB_HOST_ARCH)))
+BACKEND_VNC=false
+else
+BACKEND_VNC=true
+endif
+
 override_dh_auto_configure:
-	dh_auto_configure -- -Dscreenshare=true \
+	dh_auto_configure -- \
+	        -Dbackend-rdp=$(BACKEND_RDP) \
+	        -Dbackend-vnc=$(BACKEND_VNC) \
+	        -Dscreenshare=true \
 		-Dsystemd=true
 
 override_dh_auto_test:
