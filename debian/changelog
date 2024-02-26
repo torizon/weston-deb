@@ -1,3 +1,13 @@
+weston (13.0.0-3) unstable; urgency=medium
+
+  * Retrict architectures where tests are run
+  * Disable backend-rdp for i64 and backend-vnc for i64 and sparc64,
+      because of Build-Deps not available.
+  * Mark Skip_xwayland_test.patch as 'Forwarded: not-needed'
+  * Switch from pkg-config to pkgconf
+
+ -- Dylan Aïssi <daissi@debian.org>  Mon, 26 Feb 2024 18:02:10 +0100
+
 weston (13.0.0-2) unstable; urgency=medium
 
   * Mark libweston-13-dev as 'Multi-Arch: same'
