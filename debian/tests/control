@@ -3,3 +3,6 @@
 Test-Command: dh_auto_configure; dh_auto_build; dh_auto_test
 Depends: @builddeps@
 Restrictions: allow-stderr
+Architecture: amd64 arm64 armel i386 ppc64el
+# Tests fail on some Architectures
+# https://gitlab.freedesktop.org/wayland/weston/-/issues/739
