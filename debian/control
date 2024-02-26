@@ -48,7 +48,7 @@ Build-Depends: debhelper-compat (= 13),
                libxml2-dev,
                mesa-common-dev,
                meson (>= 0.63.0),
-               pkg-config,
+               pkgconf,
                wayland-protocols (>= 1.31)
 Standards-Version: 4.6.2
 Rules-Requires-Root: no
