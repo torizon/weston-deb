@@ -2,6 +2,7 @@ Description: Skip the xwayland test because it doesn't work on Debian at
  build time, nor on the autopkgtest infrastructure. It fails with:
  > failed to bind to /tmp/.X11-unix/X0: No such file or directory
 Author: Dylan Aïssi <daissi@debian.org>
+Forwarded: not-needed
 
 --- a/tests/xwayland-test.c
 +++ b/tests/xwayland-test.c
