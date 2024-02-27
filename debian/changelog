@@ -1,3 +1,9 @@
+weston (13.0.0-4) unstable; urgency=medium
+
+  * Fix syntax of non fatal tests
+
+ -- Dylan Aïssi <daissi@debian.org>  Tue, 27 Feb 2024 09:24:06 +0100
+
 weston (13.0.0-3) unstable; urgency=medium
 
   * Retrict architectures where tests are run
