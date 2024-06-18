@@ -4,39 +4,24 @@ on: push
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
-        os: ['debian:stable', 'debian:testing', 'debian:unstable']
         arch: ['amd64', 'arm64', 'armhf']
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Update base container
-        run: sudo apt-get -y update
-
-      - name: Set up binfmt with qemu
-        uses: docker/setup-qemu-action@v3
-
-      - name: Build Debian Package
-        uses: jtdor/build-deb-action@v1
-        env:
-          DEB_BUILD_OPTIONS: noautodbgsym
-        with:
-          buildpackage-opts: --build=binary --no-sign
-          extra-docker-args: --platform ${{ matrix.arch }}
-          docker-image: ${{ matrix.os }}
-
-      - name: Generating artifact directory name
-        run: |
-          os_no_colon=$(echo "${{ matrix.os }}" | tr ':' '-')
-          echo "artifacts=weston-${os_no_colon}-${{ matrix.arch }}" >> $GITHUB_ENV
-
-      - name: Upload Workflow Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.artifacts }}
-          path: debian/artifacts/*
-          retention-days: 90
+        include:
+          - run-piuparts: false
+          - run-piuparts: true
+            arch: amd64
+    uses: torizon/torizon-deb-ci/.github/workflows/toradex-deb-ci.yml@v0
+    with:
+      arch: ${{ matrix.arch }}
+      distribution: bookworm
+      docker-image: debian:bookworm
+      package-name: weston
+      run-attestation: true
+      run-piuparts: "${{ matrix.run-piuparts }}"
+      upload-artifacts: true
